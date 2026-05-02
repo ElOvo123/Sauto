@@ -1,19 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-
+import copy
 
 class Particle:
     def __init__(self, state, weight):
         self.state = np.array(state, dtype=float)
         self.weight = float(weight)
+        self.landmarks = {}
 
     def copy(self):
-        return Particle(self.state.copy(), self.weight)
+        new_p = Particle(self.state.copy(), self.weight)
+        new_p.landmarks = copy.deepcopy(self.landmarks)
+        return new_p
 
 
 class ParticleFilter:
@@ -97,9 +96,11 @@ class ParticleFilter:
         return 1.0 / np.sum(weights ** 2)
 
     def systematic_resample(self):
+        """
+        ALTERADO: Agora copia os OBJETOS inteiros (Particle) e não apenas os arrays.
+        Isto preserva os mapas de EKFs do FastSLAM durante o resample.
+        """
         weights = self.get_weights_array()
-        states = self.get_states_array()
-
         positions = (self.rng.random() + np.arange(self.num_particles)) / self.num_particles
 
         cumulative_sum = np.cumsum(weights)
@@ -107,10 +108,14 @@ class ParticleFilter:
 
         indexes = np.searchsorted(cumulative_sum, positions)
 
-        new_states = states[indexes]
-        new_weights = np.ones(self.num_particles) / self.num_particles
+        new_particles = []
+        for idx in indexes:
+            # O .copy() aqui invoca a nossa nova função que faz deepcopy dos landmarks
+            p_clone = self.particles[idx].copy()
+            p_clone.weight = 1.0 / self.num_particles
+            new_particles.append(p_clone)
 
-        self.set_states_and_weights(new_states, new_weights)
+        self.particles = new_particles
 
     def step(self, z, k, u=None):
         self.predict(k, u)
@@ -146,13 +151,10 @@ def nonlinear_state_transition(x_prev, k):
         + 8.0 * np.cos(1.2 * k)
     )
 
-
 def generate_data(T=100, process_var=10.0, measurement_var=1.0, seed=1):
     rng = np.random.default_rng(seed)
-
     x_true = np.zeros(T)
     z_meas = np.zeros(T)
-
     x_true[0] = rng.normal(0, np.sqrt(process_var))
     z_meas[0] = x_true[0] ** 2 / 20.0 + rng.normal(0, np.sqrt(measurement_var))
 
@@ -162,33 +164,24 @@ def generate_data(T=100, process_var=10.0, measurement_var=1.0, seed=1):
 
     return x_true, z_meas
 
-
 def init_particles(num_particles, state_dim, rng):
     return rng.uniform(-25, 25, size=(num_particles, state_dim))
-
 
 def motion_model(particles, k, u, rng):
     process_var = 10.0
     noise = rng.normal(0, np.sqrt(process_var), size=particles.shape)
-
     x = particles[:, 0]
     predicted = nonlinear_state_transition(x, k) + noise[:, 0]
-
     return predicted.reshape(-1, 1)
-
 
 def measurement_likelihood(z, particles):
     measurement_var = 1.0
     x = particles[:, 0]
-
     expected_z = x ** 2 / 20.0
     error = z - expected_z
-
     likelihood = np.exp(-0.5 * error ** 2 / measurement_var)
     likelihood /= np.sqrt(2.0 * np.pi * measurement_var)
-
     return likelihood
-
 
 def run_test(debug=True):
     T = 100
@@ -261,90 +254,5 @@ def run_test(debug=True):
 
     return pf, x_true, z_meas, estimates
 
-def animate_particle_filter(pf, x_true, z_meas, estimates):
-    particle_history = np.array(pf.history_particles)[:, :, 0]
-
-    T = len(x_true)
-    num_particles = particle_history.shape[1]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    ax.set_xlim(0, T)
-    ax.set_ylim(-30, 30)
-    ax.set_xlabel("Time step k")
-    ax.set_ylabel("State x")
-    ax.set_title("Animated Particle Filter")
-
-    ax.grid(True)
-
-    true_line, = ax.plot([], [], label="True state", linewidth=2)
-    estimate_line, = ax.plot([], [], label="PF estimate", linewidth=2)
-    particle_scatter = ax.scatter([], [], s=8, alpha=0.25, label="Particles")
-
-    current_true, = ax.plot([], [], "o", markersize=8, label="Current true state")
-    current_est, = ax.plot([], [], "o", markersize=8, label="Current estimate")
-
-    text_box = ax.text(
-        0.02,
-        0.95,
-        "",
-        transform=ax.transAxes,
-        verticalalignment="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
-    )
-
-    ax.legend(loc="upper right")
-
-    def init():
-        true_line.set_data([], [])
-        estimate_line.set_data([], [])
-        particle_scatter.set_offsets(np.empty((0, 2)))
-        current_true.set_data([], [])
-        current_est.set_data([], [])
-        text_box.set_text("")
-        return true_line, estimate_line, particle_scatter, current_true, current_est, text_box
-
-    def update(frame):
-        k_values = np.arange(frame + 1)
-
-        true_line.set_data(k_values, x_true[:frame + 1])
-        estimate_line.set_data(k_values, estimates[:frame + 1])
-
-        x_particles = np.full(num_particles, frame)
-        y_particles = particle_history[frame]
-
-        particle_scatter.set_offsets(np.column_stack((x_particles, y_particles)))
-
-        current_true.set_data([frame], [x_true[frame]])
-        current_est.set_data([frame], [estimates[frame]])
-
-        resampled_text = "YES" if pf.history_resampled[frame] else "NO"
-
-        text_box.set_text(
-            f"k = {frame}\n"
-            f"z = {z_meas[frame]:.2f}\n"
-            f"True x = {x_true[frame]:.2f}\n"
-            f"PF estimate = {estimates[frame]:.2f}\n"
-            f"N_eff = {pf.history_neff[frame]:.1f}\n"
-            f"Resampled = {resampled_text}"
-        )
-
-        return true_line, estimate_line, particle_scatter, current_true, current_est, text_box
-
-    ani = FuncAnimation(
-        fig,
-        update,
-        frames=T,
-        init_func=init,
-        interval=120,
-        blit=True,
-        repeat=True
-    )
-
-    plt.show()
-    return ani
-
-
 if __name__ == "__main__":
-    pf, x_true, z_meas, estimates = run_test(debug=False)
-    # animate_particle_filter(pf, x_true, z_meas, estimates)
+    run_test(debug=False)
