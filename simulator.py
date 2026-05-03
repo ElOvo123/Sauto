@@ -49,8 +49,8 @@ def main():
         sensor_data = robot.get_camera_measurements(env.landmarks)
         odom_data = robot.get_odometry() # Returns the noisy [x, y, theta]
 
-        #print (sensor_data)
-        print (odom_data)
+        print (sensor_data)
+        #print (odom_data)
 
         # 3. RUN SLAM ALGORITHM
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
