@@ -29,19 +29,28 @@ def main():
     robot = SimulatedTurtlebot(*true_start_pose)
     slam = FastSLAM(initial_pose=true_start_pose)
 
+    pygame.font.init()
+    # Cria uma fonte Arial, tamanho 24
+    my_font = pygame.font.SysFont('Arial', 24)
+
     running = True
+    v, w = 0.0, 0.0
     while running:
         # 1. PROCESS KEYBOARD INPUTS
-        v, w = 0.0, 0.0
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_UP]:    v = 0.5
-        if keys[pygame.K_DOWN]:  v = -0.5
-        if keys[pygame.K_LEFT]:  w = 1.0
-        if keys[pygame.K_RIGHT]: w = -1.0
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+                
+            # KEYDOWN só dispara UMA vez quando carregas na tecla
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    v += 0.02
+                elif event.key == pygame.K_DOWN:
+                    v -= 0.02
+                elif event.key == pygame.K_LEFT:
+                    w += 0.02
+                elif event.key == pygame.K_RIGHT:
+                    w -= 0.02
 
         # 2. RUN REAL-WORLD PHYSICS 
         # Notice we pass env.walls to the move function now!
@@ -49,8 +58,8 @@ def main():
         sensor_data = robot.get_camera_measurements(env.landmarks)
         odom_data = robot.get_odometry() # Returns the noisy [x, y, theta]
 
-        print (sensor_data)
-        #print (odom_data)
+        #print (sensor_data)
+        print (odom_data)
 
         # 3. RUN SLAM ALGORITHM
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
@@ -60,6 +69,11 @@ def main():
         
         # Draw Floor Plan
         env.draw(screen, to_screen)
+
+        # Draw the particles
+        for px, py, ptheta in particles:
+            pos = to_screen(px, py)
+            pygame.draw.circle(screen, (255, 100, 100), pos, 2)
 
         # Draw SLAM Estimated Map (Blue squares)
         for mark_id, (lx, ly) in est_map.items():
@@ -76,6 +90,12 @@ def main():
         end_x = bx + (robot.radius + 0.1) * math.cos(robot.theta)
         end_y = by + (robot.radius + 0.1) * math.sin(robot.theta)
         pygame.draw.line(screen, (255, 0, 0), rob_pos, to_screen(end_x, end_y), 2)
+
+        # Draw velocity
+        text_v = my_font.render(f"Velocidade Linear (v): {v:.2f} m/s", True, (0, 0, 0))
+        text_w = my_font.render(f"Velocidade Angular (w): {w:.2f} rad/s", True, (0, 0, 0))
+        screen.blit(text_v, (10, 10))
+        screen.blit(text_w, (10, 40))
 
         pygame.display.flip()
         clock.tick(FPS)
