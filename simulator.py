@@ -33,6 +33,11 @@ def main():
     # Cria uma fonte Arial, tamanho 24
     my_font = pygame.font.SysFont('Arial', 24)
 
+    true_pose_history = []
+    estimated_pose_history = []
+    position_error_history = []
+    landmark_error_history = []
+
     running = True
     v, w = 0.0, 0.0
     while running:
@@ -64,9 +69,40 @@ def main():
         # 3. RUN SLAM ALGORITHM
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
 
+        # --- STORE ERRORS FOR EVALUATION ---
+
+        true_pose = [robot.x, robot.y, robot.theta]
+
+        true_pose_history.append(true_pose)
+        estimated_pose_history.append(est_pose)
+
+        # Robot position error
+        pos_error = math.hypot(
+            robot.x - est_pose[0],
+            robot.y - est_pose[1]
+        )
+        position_error_history.append(pos_error)
+
+        # Landmark mapping error
+        lm_errors = []
+
+        for lm_id, est_lm in est_map.items():
+            if lm_id in env.landmarks:
+                true_lm = env.landmarks[lm_id]
+
+                lm_error = math.hypot(
+                    true_lm[0] - est_lm[0],
+                    true_lm[1] - est_lm[1]
+                )
+
+                lm_errors.append(lm_error)
+
+        if len(lm_errors) > 0:
+            landmark_error_history.append(sum(lm_errors) / len(lm_errors))
+
         # 4. RENDER GRAPHICS
         screen.fill((240, 240, 240)) 
-        
+
         # Draw Floor Plan
         env.draw(screen, to_screen)
 
@@ -99,6 +135,25 @@ def main():
 
         pygame.display.flip()
         clock.tick(FPS)
+
+    # --- FINAL EVALUATION ---
+
+    if len(position_error_history) > 0:
+        mean_position_error = sum(position_error_history) / len(position_error_history)
+        final_position_error = position_error_history[-1]
+
+        print("\n===== FASTSLAM EVALUATION =====")
+        print(f"Mean robot position error: {mean_position_error:.3f} m")
+        print(f"Final robot position error: {final_position_error:.3f} m")
+
+    if len(landmark_error_history) > 0:
+        mean_landmark_error = sum(landmark_error_history) / len(landmark_error_history)
+        final_landmark_error = landmark_error_history[-1]
+
+        print(f"Mean landmark error: {mean_landmark_error:.3f} m")
+        print(f"Final landmark error: {final_landmark_error:.3f} m")
+
+    print("================================\n")
 
     pygame.quit()
     sys.exit()
