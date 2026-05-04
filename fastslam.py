@@ -10,33 +10,48 @@ def landmark_motion_model(state_estimate, control_input=None):
 def landmark_motion_jacobian(state_estimate, control_input=None):
     return np.eye(2)
 
-def make_measurement_model(robot_state):
+def make_measurement_model(robot_state, camera_offset=0.05):
     rx, ry, rtheta = robot_state
+
+    cam_x = rx + camera_offset * math.cos(rtheta)
+    cam_y = ry + camera_offset * math.sin(rtheta)
+
     def model(lm_state):
         lx, ly = lm_state
-        dx = lx - rx
-        dy = ly - ry
+        dx = lx - cam_x
+        dy = ly - cam_y
+
         r = math.hypot(dx, dy)
         b = math.atan2(dy, dx) - rtheta
         b = (b + math.pi) % (2 * math.pi) - math.pi
+
         return np.array([r, b])
+
     return model
 
-def make_measurement_jacobian(robot_state):
+def make_measurement_jacobian(robot_state, camera_offset=0.05):
     rx, ry, rtheta = robot_state
+
+    cam_x = rx + camera_offset * math.cos(rtheta)
+    cam_y = ry + camera_offset * math.sin(rtheta)
+
     def jacobian(lm_state):
         lx, ly = lm_state
-        dx = lx - rx
-        dy = ly - ry
+        dx = lx - cam_x
+        dy = ly - cam_y
+
         q = dx**2 + dy**2
-        if q < 1e-6: q = 1e-6
+        if q < 1e-6:
+            q = 1e-6
+
         sq = math.sqrt(q)
+
         return np.array([
             [dx / sq, dy / sq],
             [-dy / q, dx / q]
         ])
-    return jacobian
 
+    return jacobian
 
 class FastSLAM(ParticleFilter):
     def __init__(self, initial_pose, num_particles=100):
@@ -170,8 +185,13 @@ class FastSLAM(ParticleFilter):
                 z = np.array([meas[1], meas[2]])
 
                 if m_id not in p.landmarks:
-                    lx = p.state[0] + z[0] * math.cos(p.state[2] + z[1])
-                    ly = p.state[1] + z[0] * math.sin(p.state[2] + z[1])
+                    #Inicializar a landamrk apartir da pose atual da partícula e da medição da câmara
+                    cam_x = p.state[0] + 0.05 * math.cos(p.state[2])
+                    cam_y = p.state[1] + 0.05 * math.sin(p.state[2])
+
+                    lx = cam_x + z[0] * math.cos(p.state[2] + z[1])
+                    ly = cam_y + z[0] * math.sin(p.state[2] + z[1])
+
                     p.landmarks[m_id] = ExtendedKalmanFilter(
                         initial_state=np.array([lx, ly]),
                         initial_covariance=np.eye(2) * 1.0,

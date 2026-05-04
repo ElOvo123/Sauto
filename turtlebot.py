@@ -97,6 +97,9 @@ class SimulatedTurtlebot:
                 noise_range = np.random.normal(0, 0.05)   
                 noise_bearing = np.random.normal(0, 0.02) 
                 
-                measurements.append([marker_id, true_range + noise_range, true_bearing + noise_bearing])
-                
+                noisy_range = max(0.01, true_range + noise_range)
+                noisy_bearing = true_bearing + noise_bearing
+                noisy_bearing = (noisy_bearing + math.pi) % (2 * math.pi) - math.pi
+                measurements.append([marker_id, noisy_range, noisy_bearing])
+                                
         return measurements
