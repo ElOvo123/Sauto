@@ -24,6 +24,7 @@ def main():
     clock = pygame.time.Clock()
 
     env = Environment()
+    true_trajectory = []  # To store the true trajectory for visualization
     
     true_start_pose = [3.0, 3.0, 0.0] 
     robot = SimulatedTurtlebot(*true_start_pose)
@@ -55,6 +56,11 @@ def main():
         # 2. RUN REAL-WORLD PHYSICS 
         # Notice we pass env.walls to the move function now!
         robot.move(v, w, DT, env.outer_walls)
+        
+        # Save true robot trajectory
+        bx, by = robot.get_body_center()
+        true_trajectory.append((bx, by))
+
         sensor_data = robot.get_camera_measurements(env.landmarks)
         odom_data = robot.get_odometry() # Returns the noisy [x, y, theta]
 
@@ -68,7 +74,13 @@ def main():
         screen.fill((240, 240, 240)) 
         
         # Draw Floor Plan
+        # Draw Floor Plan
         env.draw(screen, to_screen)
+
+        # Draw true robot trajectory
+        if len(true_trajectory) > 1:
+            trajectory_points = [to_screen(x, y) for x, y in true_trajectory]
+            pygame.draw.lines(screen, (0, 200, 0), False, trajectory_points, 2)
 
         # Draw the particles
         for px, py, ptheta in particles:
