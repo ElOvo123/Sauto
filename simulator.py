@@ -26,10 +26,6 @@ def main():
     env = Environment()
     true_trajectory = []
     best_particle_trajectory = []
-
-    lap_completed = False
-    has_left_start_zone = False
-    start_zone_radius = 0.5
     
     true_start_pose = [3.0, 3.0, 0.0] 
     robot = SimulatedTurtlebot(*true_start_pose)
@@ -80,24 +76,10 @@ def main():
         # 3. RUN SLAM ALGORITHM
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
 
-        # Detect full lap using true robot body center
-        dist_to_start = math.hypot(
-            bx - true_start_pose[0],
-            by - true_start_pose[1]
-        )
-
-        if dist_to_start > start_zone_radius:
-            has_left_start_zone = True
-
-        if has_left_start_zone and dist_to_start < start_zone_radius:
-            lap_completed = True
-
-        # After one full lap, save trajectory of the best particle
-        if lap_completed:
-            best_particle_trajectory.append((est_pose[0], est_pose[1]))
+        # Save trajectory of the best particle from the start
+        best_particle_trajectory.append((est_pose[0], est_pose[1]))
 
         # --- STORE ERRORS FOR EVALUATION ---
-
         true_pose = [robot.x, robot.y, robot.theta]
 
         true_pose_history.append(true_pose)
@@ -133,13 +115,7 @@ def main():
         # Draw Floor Plan
         # Draw Floor Plan
         env.draw(screen, to_screen)
-
-        # Draw start zone (red circle)
-        start_screen = to_screen(true_start_pose[0], true_start_pose[1])
-        pixel_radius = int(start_zone_radius * SCALE)
-
-        pygame.draw.circle(screen, (255, 0, 0), start_screen, pixel_radius, 2)
-
+        
         # Draw true robot trajectory
         if len(true_trajectory) > 1:
             trajectory_points = [to_screen(x, y) for x, y in true_trajectory]
