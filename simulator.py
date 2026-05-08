@@ -25,8 +25,9 @@ def main():
 
     env = Environment()
     true_trajectory = []
-    best_particle_trajectory = []
-    
+    current_lap_best_trajectory = []
+    displayed_best_trajectory = []
+        
     true_start_pose = [3.0, 3.0, 0.0] 
     robot = SimulatedTurtlebot(*true_start_pose)
     slam = FastSLAM(initial_pose=true_start_pose)
@@ -42,6 +43,21 @@ def main():
 
     running = True
     v, w = 0.0, 0.0
+
+    auto_drive = False
+    auto_speed = 3.0
+
+    # Corridor center lines
+    left_x = 3.125
+    right_x = 17.375
+    bottom_y = 3.125
+    top_y = 17.375
+
+    auto_state = "BOTTOM"
+    lap_count = 0
+    previous_auto_state = auto_state
+    was_in_left_state = False
+
     while running:
         # 1. PROCESS KEYBOARD INPUTS
         for event in pygame.event.get():
@@ -58,6 +74,76 @@ def main():
                     w += 0.02
                 elif event.key == pygame.K_RIGHT:
                     w -= 0.02
+                elif event.key == pygame.K_t:
+                    auto_drive = True
+
+                    robot.x = left_x
+                    robot.y = bottom_y
+                    robot.theta = 0.0
+
+                    robot.odom_x = robot.x
+                    robot.odom_y = robot.y
+                    robot.odom_theta = robot.theta
+
+                    auto_state = "BOTTOM"
+        if auto_drive:
+            corner_margin = 0.6
+            k_heading = 3.0
+            k_center = 0.8
+            max_w = 1.2
+
+            if auto_state == "BOTTOM" and robot.x >= right_x - corner_margin:
+                auto_state = "RIGHT"
+            elif auto_state == "RIGHT" and robot.y >= top_y - corner_margin:
+                auto_state = "TOP"
+            elif auto_state == "TOP" and robot.x <= left_x + corner_margin:
+                auto_state = "LEFT"
+            elif auto_state == "LEFT" and robot.y <= bottom_y + corner_margin:
+                auto_state = "BOTTOM"
+
+            # Detect completed lap
+            if auto_state == "LEFT":
+                was_in_left_state = True
+
+            if was_in_left_state and auto_state == "BOTTOM":
+                lap_count += 1
+                was_in_left_state = False
+
+                print(f"Lap completed: {lap_count}")
+                print(f"Saved trajectory points: {len(current_lap_best_trajectory)}")
+
+                displayed_best_trajectory = current_lap_best_trajectory.copy()
+                current_lap_best_trajectory = []
+
+            # Then compute target heading and center error for CURRENT state
+            if auto_state == "BOTTOM":
+                target_theta = 0.0
+                cross_track_error = robot.y - bottom_y
+
+            elif auto_state == "RIGHT":
+                target_theta = math.pi / 2
+                cross_track_error = right_x - robot.x
+
+            elif auto_state == "TOP":
+                target_theta = math.pi
+                cross_track_error = top_y - robot.y
+
+            elif auto_state == "LEFT":
+                target_theta = -math.pi / 2
+                cross_track_error = robot.x - left_x
+
+            angle_error = (target_theta - robot.theta + math.pi) % (2 * math.pi) - math.pi
+
+            w = k_heading * angle_error - k_center * cross_track_error
+
+            # Limit angular speed to avoid huge arcs
+            w = max(-max_w, min(max_w, w))
+
+            # Slow down only while turning
+            if abs(angle_error) > 0.25:
+                v = 1.0
+            else:
+                v = auto_speed
 
         # 2. RUN REAL-WORLD PHYSICS 
         # Notice we pass env.walls to the move function now!
@@ -76,9 +162,10 @@ def main():
         # 3. RUN SLAM ALGORITHM
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
 
-        # Save trajectory of the best particle from the start
-        best_particle_trajectory.append((est_pose[0], est_pose[1]))
-
+        # Record first-lap best particle trajectory
+        # Record current lap best-particle trajectory
+        current_lap_best_trajectory.append((est_pose[0], est_pose[1]))
+        
         # --- STORE ERRORS FOR EVALUATION ---
         true_pose = [robot.x, robot.y, robot.theta]
 
@@ -115,15 +202,15 @@ def main():
         # Draw Floor Plan
         # Draw Floor Plan
         env.draw(screen, to_screen)
-        
+
         # Draw true robot trajectory
         if len(true_trajectory) > 1:
             trajectory_points = [to_screen(x, y) for x, y in true_trajectory]
             pygame.draw.lines(screen, (0, 200, 0), False, trajectory_points, 2)
 
         # Draw best particle trajectory after full lap
-        if len(best_particle_trajectory) > 1:
-            best_particle_points = [to_screen(x, y) for x, y in best_particle_trajectory]
+        if len(displayed_best_trajectory) > 1:
+            best_particle_points = [to_screen(x, y) for x, y in displayed_best_trajectory]
             pygame.draw.lines(screen, (0, 0, 255), False, best_particle_points, 3)
 
         # Draw the particles
