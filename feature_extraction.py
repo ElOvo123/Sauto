@@ -6,12 +6,26 @@ from cv_bridge import CvBridge
 
 import cv2
 import numpy as np
+import math
 
 
 class ArucoFeatureExtractor:
     def __init__(self, dictionary_name=cv2.aruco.DICT_4X4_50):
         self.dictionary = cv2.aruco.Dictionary_get(dictionary_name)
         self.parameters = cv2.aruco.DetectorParameters_create()
+
+        # Marker real size in meters
+        self.marker_size = 0.10  # 10 cm
+
+        # Approximate camera calibration for 1280x800 image
+        # Replace these with your real camera calibration if available
+        self.camera_matrix = np.array([
+            [640.0,   0.0, 640.0],
+            [  0.0, 640.0, 400.0],
+            [  0.0,   0.0,   1.0]
+        ], dtype=np.float32)
+
+        self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
     def extract(self, frame):
         features = []
@@ -32,23 +46,48 @@ class ArucoFeatureExtractor:
 
         cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
-        for marker_corners, marker_id in zip(corners, ids.flatten()):
+        rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
+            corners,
+            self.marker_size,
+            self.camera_matrix,
+            self.dist_coeffs
+        )
+
+        for marker_corners, marker_id, rvec, tvec in zip(
+            corners,
+            ids.flatten(),
+            rvecs,
+            tvecs
+        ):
             pts = marker_corners[0]
             center = np.mean(pts, axis=0)
+            center_int = tuple(center.astype(int))
+
+            x = float(tvec[0][0])
+            y = float(tvec[0][1])
+            z = float(tvec[0][2])
+
+            range_m = math.sqrt(x**2 + y**2 + z**2)
+            bearing_rad = math.atan2(x, z)
+            bearing_deg = math.degrees(bearing_rad)
 
             features.append({
                 "id": int(marker_id),
                 "type": "aruco",
                 "corners": pts,
-                "center_px": center
+                "center_px": center,
+                "range_m": range_m,
+                "bearing_rad": bearing_rad,
+                "bearing_deg": bearing_deg,
+                "tvec": tvec,
+                "rvec": rvec
             })
 
-            center_int = tuple(center.astype(int))
             cv2.circle(frame, center_int, 5, (0, 0, 255), -1)
 
             cv2.putText(
                 frame,
-                f"ID {int(marker_id)} ({center[0]:.1f},{center[1]:.1f})",
+                f"ID {int(marker_id)} R={range_m:.2f}m B={bearing_deg:.1f}deg",
                 center_int,
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -85,7 +124,8 @@ class ArucoNode(Node):
 
         for f in features:
             self.get_logger().info(
-                f"ID={f['id']} center={f['center_px']}"
+                f"ID={f['id']} range={f['range_m']:.2f} m "
+                f"bearing={f['bearing_deg']:.1f} deg"
             )
 
         cv2.imshow("Aruco Detection", frame)
