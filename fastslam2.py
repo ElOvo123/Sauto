@@ -53,7 +53,7 @@ def make_measurement_jacobian(robot_state, camera_offset=0.05):
 
     return jacobian
 
-class FastSLAM(ParticleFilter):
+class FastSLAM2(ParticleFilter):
     def __init__(self, initial_pose, num_particles=100):
         def dummy_init(n, d, rng):
             return np.tile(initial_pose, (n, 1))
