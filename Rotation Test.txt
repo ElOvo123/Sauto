@@ -1,0 +1,103 @@
+-3.0
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.628 m
+Final robot position error: 0.425 m
+Mean landmark error: 0.481 m
+Final landmark error: 0.478 m
+================================
+
+-2.5
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.394 m
+Final robot position error: 0.390 m
+Mean landmark error: 0.325 m
+Final landmark error: 0.310 m
+================================
+
+-2
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.383 m
+Final robot position error: 0.292 m
+Mean landmark error: 0.275 m
+Final landmark error: 0.209 m
+================================
+
+-1.5
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.386 m
+Final robot position error: 0.284 m
+Mean landmark error: 0.290 m
+Final landmark error: 0.282 m
+================================
+
+-1
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.248 m
+Final robot position error: 0.162 m
+Mean landmark error: 0.168 m
+Final landmark error: 0.114 m
+================================
+
+-0.5
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.307 m
+Final robot position error: 0.097 m
+Mean landmark error: 0.234 m
+Final landmark error: 0.253 m
+================================
+
+0
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.222 m
+Final robot position error: 0.135 m
+Mean landmark error: 0.163 m
+Final landmark error: 0.163 m
+================================
+
+0.5
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.297 m
+Final robot position error: 0.068 m
+Mean landmark error: 0.207 m
+Final landmark error: 0.218 m
+================================
+
+1
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.277 m
+Final robot position error: 0.150 m
+Mean landmark error: 0.230 m
+Final landmark error: 0.253 m
+================================
+
+1.5
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.391 m
+Final robot position error: 0.437 m
+Mean landmark error: 0.372 m
+Final landmark error: 0.447 m
+================================
+
+2
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.362 m
+Final robot position error: 0.316 m
+Mean landmark error: 0.336 m
+Final landmark error: 0.312 m
+================================
+
+2.5
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.279 m
+Final robot position error: 0.130 m
+Mean landmark error: 0.230 m
+Final landmark error: 0.128 m
+================================
+
+3
+===== FASTSLAM EVALUATION =====
+Mean robot position error: 0.348 m
+Final robot position error: 0.304 m
+Mean landmark error: 0.327 m
+Final landmark error: 0.258 m
+================================

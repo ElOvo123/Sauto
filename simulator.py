@@ -14,11 +14,51 @@ SCALE = 45.0
 FPS = 30
 DT = 1.0 / FPS
 
- 
+
 def to_screen(x, y):
     screen_x = int(x * SCALE)
     screen_y = int(HEIGHT - (y * SCALE))
     return (screen_x, screen_y)
+
+
+class EstimationAlignment:
+    def __init__(self, rotation_offset_deg=0.0, center_x=0.0, center_y=0.0):
+        self.rotation_offset_deg = rotation_offset_deg
+        self.rotation_offset_rad = math.radians(rotation_offset_deg)
+        self.center_x = center_x
+        self.center_y = center_y
+
+    def rotate_point(self, x, y):
+        dx = x - self.center_x
+        dy = y - self.center_y
+
+        rotated_x = (
+            self.center_x
+            + dx * math.cos(self.rotation_offset_rad)
+            - dy * math.sin(self.rotation_offset_rad)
+        )
+
+        rotated_y = (
+            self.center_y
+            + dx * math.sin(self.rotation_offset_rad)
+            + dy * math.cos(self.rotation_offset_rad)
+        )
+
+        return rotated_x, rotated_y
+
+    def align_pose(self, x, y, theta=None):
+        aligned_x, aligned_y = self.rotate_point(x, y)
+
+        if theta is not None:
+            aligned_theta = theta + self.rotation_offset_rad
+            aligned_theta = (
+                aligned_theta + math.pi
+            ) % (2 * math.pi) - math.pi
+
+            return aligned_x, aligned_y, aligned_theta
+
+        return aligned_x, aligned_y
+
 
 def main():
     pygame.init()
@@ -35,6 +75,12 @@ def main():
     true_start_pose = [3.0, 3.0, 0.0]
     robot = SimulatedTurtlebot(*true_start_pose)
     slam = FastSLAM1(initial_pose=true_start_pose)
+
+    alignment = EstimationAlignment(
+        rotation_offset_deg=-1.0,
+        center_x=10.25,
+        center_y=10.25
+    )
 
     pygame.font.init()
     my_font = pygame.font.SysFont("Arial", 24)
@@ -165,7 +211,8 @@ def main():
 
             if best_particle_index is not None:
                 displayed_best_trajectory = [
-                    (x, y) for x, y, weight in current_lap_particle_paths[best_particle_index]
+                    (x, y)
+                    for x, y, weight in current_lap_particle_paths[best_particle_index]
                 ]
 
                 print(
@@ -187,22 +234,33 @@ def main():
 
             # Convert particle pose to robot body center
             body_offset = robot.body_offset
-
             corrected_x = px - body_offset * math.cos(ptheta)
             corrected_y = py - body_offset * math.sin(ptheta)
 
+            # Apply fixed estimation-frame alignment
+            aligned_x, aligned_y = alignment.align_pose(
+                corrected_x,
+                corrected_y
+            )
+
             current_lap_particle_paths[particle_index].append(
-                (corrected_x, corrected_y, pweight)
+                (aligned_x, aligned_y, pweight)
             )
 
         true_pose = [robot.x, robot.y, robot.theta]
         true_pose_history.append(true_pose)
         estimated_pose_history.append(est_pose)
 
-        pos_error = math.hypot(
-            robot.x - est_pose[0],
-            robot.y - est_pose[1]
+        aligned_est_x, aligned_est_y = alignment.align_pose(
+            est_pose[0],
+            est_pose[1]
         )
+
+        pos_error = math.hypot(
+            robot.x - aligned_est_x,
+            robot.y - aligned_est_y
+        )
+
         position_error_history.append(pos_error)
 
         lm_errors = []
@@ -211,9 +269,14 @@ def main():
             if lm_id in env.landmarks:
                 true_lm = env.landmarks[lm_id]
 
+                aligned_lm_x, aligned_lm_y = alignment.align_pose(
+                    est_lm[0],
+                    est_lm[1]
+                )
+
                 lm_error = math.hypot(
-                    true_lm[0] - est_lm[0],
-                    true_lm[1] - est_lm[1]
+                    true_lm[0] - aligned_lm_x,
+                    true_lm[1] - aligned_lm_y
                 )
 
                 lm_errors.append(lm_error)
@@ -242,7 +305,9 @@ def main():
             pygame.draw.circle(screen, (255, 100, 100), pos, 2)
 
         for mark_id, (lx, ly) in est_map.items():
-            pos = to_screen(lx, ly)
+            aligned_lx, aligned_ly = alignment.align_pose(lx, ly)
+            pos = to_screen(aligned_lx, aligned_ly)
+
             pygame.draw.rect(
                 screen,
                 (0, 0, 255),
@@ -277,8 +342,15 @@ def main():
             (0, 0, 0)
         )
 
+        text_align = my_font.render(
+            f"Alignment rot: {alignment.rotation_offset_deg:.1f} deg",
+            True,
+            (0, 0, 0)
+        )
+
         screen.blit(text_v, (10, 10))
         screen.blit(text_w, (10, 40))
+        screen.blit(text_align, (10, 70))
 
         pygame.display.flip()
         clock.tick(FPS)
