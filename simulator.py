@@ -4,7 +4,8 @@ import math
 
 from turtlebot import SimulatedTurtlebot
 from environment import Environment
-from fastslam import FastSLAM
+from fastslam2 import FastSLAM2
+from fastslam1 import FastSLAM1
 from lap_detection import LandmarkLapDetector
 
 # --- CONFIGURATION ---
@@ -33,7 +34,7 @@ def main():
 
     true_start_pose = [3.0, 3.0, 0.0]
     robot = SimulatedTurtlebot(*true_start_pose)
-    slam = FastSLAM(initial_pose=true_start_pose)
+    slam = FastSLAM1(initial_pose=true_start_pose)
 
     pygame.font.init()
     my_font = pygame.font.SysFont("Arial", 24)

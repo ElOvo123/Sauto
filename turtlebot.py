@@ -25,7 +25,7 @@ class SimulatedTurtlebot:
         # Physical attributes
         self.radius = 0.15          
         self.body_offset = 0.08     
-        self.camera_offset = 0.05   
+        self.camera_offset = 0.03   
         
         # Camera specs
         self.max_range = 5.0        
