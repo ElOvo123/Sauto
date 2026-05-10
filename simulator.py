@@ -13,7 +13,7 @@ SCALE = 45.0
 FPS = 30
 DT = 1.0 / FPS
 
-
+ 
 def to_screen(x, y):
     screen_x = int(x * SCALE)
     screen_y = int(HEIGHT - (y * SCALE))
