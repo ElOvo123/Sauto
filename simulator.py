@@ -4,7 +4,8 @@ import math
 
 from turtlebot import SimulatedTurtlebot
 from environment import Environment
-from fastslam import FastSLAM
+from fastslam2 import FastSLAM2
+from fastslam1 import FastSLAM1
 from lap_detection import LandmarkLapDetector
 
 # --- CONFIGURATION ---
@@ -13,7 +14,7 @@ SCALE = 45.0
 FPS = 30
 DT = 1.0 / FPS
 
-
+ 
 def to_screen(x, y):
     screen_x = int(x * SCALE)
     screen_y = int(HEIGHT - (y * SCALE))
@@ -28,12 +29,12 @@ def main():
     env = Environment()
 
     true_trajectory = []
-    current_lap_best_trajectory = []
+    current_lap_particle_paths = {}
     displayed_best_trajectory = []
 
     true_start_pose = [3.0, 3.0, 0.0]
     robot = SimulatedTurtlebot(*true_start_pose)
-    slam = FastSLAM(initial_pose=true_start_pose)
+    slam = FastSLAM1(initial_pose=true_start_pose)
 
     pygame.font.init()
     my_font = pygame.font.SysFont("Arial", 24)
@@ -90,7 +91,7 @@ def main():
                     auto_state = "BOTTOM"
 
                     true_trajectory = []
-                    current_lap_best_trajectory = []
+                    current_lap_particle_paths = {}
                     displayed_best_trajectory = []
 
                     lap_detector.reset()
@@ -149,14 +150,50 @@ def main():
         )
 
         if lap_completed:
-            displayed_best_trajectory = current_lap_best_trajectory.copy()
-            current_lap_best_trajectory = []
+            best_particle_index = None
+            best_final_weight = -1.0
 
-            print(f"Saved trajectory points: {len(displayed_best_trajectory)}")
+            for particle_index, path in current_lap_particle_paths.items():
+                if len(path) == 0:
+                    continue
+
+                final_weight = path[-1][2]
+
+                if final_weight > best_final_weight:
+                    best_final_weight = final_weight
+                    best_particle_index = particle_index
+
+            if best_particle_index is not None:
+                displayed_best_trajectory = [
+                    (x, y) for x, y, weight in current_lap_particle_paths[best_particle_index]
+                ]
+
+                print(
+                    f"Lap best particle: {best_particle_index}, "
+                    f"weight={best_final_weight:.6f}, "
+                    f"points={len(displayed_best_trajectory)}"
+                )
+
+            current_lap_particle_paths = {}
 
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
 
-        current_lap_best_trajectory.append((est_pose[0], est_pose[1]))
+        # Store every particle path for this lap
+        for particle_index, particle in enumerate(particles):
+            px, py, ptheta, pweight = particle
+
+            if particle_index not in current_lap_particle_paths:
+                current_lap_particle_paths[particle_index] = []
+
+            # Convert particle pose to robot body center
+            body_offset = robot.body_offset
+
+            corrected_x = px - body_offset * math.cos(ptheta)
+            corrected_y = py - body_offset * math.sin(ptheta)
+
+            current_lap_particle_paths[particle_index].append(
+                (corrected_x, corrected_y, pweight)
+            )
 
         true_pose = [robot.x, robot.y, robot.theta]
         true_pose_history.append(true_pose)
@@ -198,7 +235,9 @@ def main():
             ]
             pygame.draw.lines(screen, (0, 0, 255), False, best_particle_points, 3)
 
-        for px, py, ptheta in particles:
+        for particle in particles:
+            px, py, ptheta = particle[:3]
+
             pos = to_screen(px, py)
             pygame.draw.circle(screen, (255, 100, 100), pos, 2)
 
