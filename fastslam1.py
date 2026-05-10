@@ -99,7 +99,7 @@ class FastSLAM1(ParticleFilter):
             best_p = max(self.particles, key=lambda p: p.weight)
             est_pose = best_p.state.tolist()
             est_map = {m_id: [ekf.state_estimate[0], ekf.state_estimate[1]] for m_id, ekf in best_p.landmarks.items()}
-            particles_poses = [[p.state[0], p.state[1], p.state[2]] for p in self.particles]
+            particles_poses = [[p.state[0], p.state[1], p.state[2], p.weight] for p in self.particles]
             return particles_poses, est_pose, est_map
 
         # --- SE CHEGOU AQUI, O ROBÔ MOVEU-SE O SUFICIENTE ---
@@ -134,7 +134,7 @@ class FastSLAM1(ParticleFilter):
         est_pose = best_p.state.tolist()
         
         est_map = {m_id: [ekf.state_estimate[0], ekf.state_estimate[1]] for m_id, ekf in best_p.landmarks.items()}
-        particles_poses = [[p.state[0], p.state[1], p.state[2]] for p in self.particles]
+        particles_poses = [[p.state[0], p.state[1], p.state[2], p.weight] for p in self.particles]
 
         return particles_poses, est_pose, est_map
 
