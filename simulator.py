@@ -72,7 +72,7 @@ def main():
     current_lap_particle_paths = {}
     displayed_best_trajectory = []
 
-    true_start_pose = [3.0, 3.0, 0.0]
+    true_start_pose = [3.0, 3.0, (math.pi / 2)]
     robot = SimulatedTurtlebot(*true_start_pose)
     slam = FastSLAM1(initial_pose=true_start_pose)
 
