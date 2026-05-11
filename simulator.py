@@ -72,14 +72,19 @@ def main():
     current_lap_particle_paths = {}
     displayed_best_trajectory = []
 
-    true_start_pose = [3.0, 3.0, 0.0]
+    left_x = 2.835
+    right_x = 16.865
+    bottom_y = 2.835
+    top_y = 16.865
+
+    true_start_pose = [left_x, bottom_y, math.pi / 2]
     robot = SimulatedTurtlebot(*true_start_pose)
     slam = FastSLAM1(initial_pose=true_start_pose)
 
     alignment = EstimationAlignment(
-        rotation_offset_deg=-1.0,
-        center_x=10.25,
-        center_y=10.25
+        rotation_offset_deg=-1.3,
+        center_x=9.85,
+        center_y=9.85
     )
 
     pygame.font.init()
@@ -94,18 +99,19 @@ def main():
     v, w = 0.0, 0.0
 
     auto_drive = False
-    auto_speed = 3.0
+    waypoint_index = 0
 
-    left_x = 3.125
-    right_x = 17.375
-    bottom_y = 3.125
-    top_y = 17.375
-
-    auto_state = "BOTTOM"
+    # Go UP first, then right, then down, then left
+    waypoints = [
+        (left_x, top_y),
+        (right_x, top_y),
+        (right_x, bottom_y),
+        (left_x, bottom_y),
+    ]
 
     lap_detector = LandmarkLapDetector(
-        cooldown_frames=FPS * 5,
-        threshold=0.5
+        cooldown_frames=FPS * 2,
+        threshold=3.0
     )
 
     while running:
@@ -128,13 +134,13 @@ def main():
 
                     robot.x = left_x
                     robot.y = bottom_y
-                    robot.theta = 0.0
+                    robot.theta = math.pi / 2
 
                     robot.odom_x = robot.x
                     robot.odom_y = robot.y
                     robot.odom_theta = robot.theta
 
-                    auto_state = "BOTTOM"
+                    waypoint_index = 0
 
                     true_trajectory = []
                     current_lap_particle_paths = {}
@@ -143,46 +149,41 @@ def main():
                     lap_detector.reset()
 
         if auto_drive:
-            corner_margin = 0.6
-            k_heading = 3.0
-            k_center = 0.8
-            max_w = 1.2
+            k_heading = 2.0
+            max_w = 0.8
+            waypoint_radius = 0.35
 
-            if auto_state == "BOTTOM" and robot.x >= right_x - corner_margin:
-                auto_state = "RIGHT"
-            elif auto_state == "RIGHT" and robot.y >= top_y - corner_margin:
-                auto_state = "TOP"
-            elif auto_state == "TOP" and robot.x <= left_x + corner_margin:
-                auto_state = "LEFT"
-            elif auto_state == "LEFT" and robot.y <= bottom_y + corner_margin:
-                auto_state = "BOTTOM"
+            target_x, target_y = waypoints[waypoint_index]
 
-            if auto_state == "BOTTOM":
-                target_theta = 0.0
-                cross_track_error = robot.y - bottom_y
-            elif auto_state == "RIGHT":
-                target_theta = math.pi / 2
-                cross_track_error = right_x - robot.x
-            elif auto_state == "TOP":
-                target_theta = math.pi
-                cross_track_error = top_y - robot.y
-            elif auto_state == "LEFT":
-                target_theta = -math.pi / 2
-                cross_track_error = robot.x - left_x
+            dx = target_x - robot.x
+            dy = target_y - robot.y
+
+            distance_to_target = math.hypot(dx, dy)
+
+            if distance_to_target < waypoint_radius:
+                waypoint_index = (waypoint_index + 1) % len(waypoints)
+
+                target_x, target_y = waypoints[waypoint_index]
+
+                dx = target_x - robot.x
+                dy = target_y - robot.y
+
+            target_theta = math.atan2(dy, dx)
 
             angle_error = (
                 target_theta - robot.theta + math.pi
             ) % (2 * math.pi) - math.pi
 
-            w = k_heading * angle_error - k_center * cross_track_error
+            w = k_heading * angle_error
             w = max(-max_w, min(max_w, w))
 
-            if abs(angle_error) > 0.25:
-                v = 1.0
+            if abs(angle_error) > 0.2:
+                v = 0.4
             else:
-                v = auto_speed
+                v = 1.2
 
-        robot.move(v, w, DT, env.outer_walls)
+        all_walls = env.outer_walls + env.inner_walls
+        robot.move(v, w, DT, all_walls)
 
         bx, by = robot.get_body_center()
         true_trajectory.append((bx, by))
@@ -225,19 +226,16 @@ def main():
 
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
 
-        # Store every particle path for this lap
         for particle_index, particle in enumerate(particles):
             px, py, ptheta, pweight = particle
 
             if particle_index not in current_lap_particle_paths:
                 current_lap_particle_paths[particle_index] = []
 
-            # Convert particle pose to robot body center
             body_offset = robot.body_offset
             corrected_x = px - body_offset * math.cos(ptheta)
             corrected_y = py - body_offset * math.sin(ptheta)
 
-            # Apply fixed estimation-frame alignment
             aligned_x, aligned_y = alignment.align_pose(
                 corrected_x,
                 corrected_y
@@ -341,7 +339,6 @@ def main():
             True,
             (0, 0, 0)
         )
-
         text_align = my_font.render(
             f"Alignment rot: {alignment.rotation_offset_deg:.1f} deg",
             True,

@@ -8,32 +8,53 @@ class Environment:
         # and 2 landmarks 0.1 m from the inner wall. IDs 1..16.
         self.landmarks = {
             # Bottom corridor (y near outer_min_y=2.0 and inner_min_y=4.25)
-            1: [4.5, 2.1],    # outer-close, left
-            2: [14.5, 2.1],   # outer-close, right
-            3: [7.5, 4.15],   # inner-close, left
-            4: [11.5, 4.15],  # inner-close, right
+            #1: [4.5, 2.1],    # outer-close, left
+            #2: [14.5, 2.1],   # outer-close, right
+            #3: [7.5, 4.15],   # inner-close, left
+            #4: [11.5, 4.15],  # inner-close, right
             # Right corridor (x near outer_max_x=18.5 and inner_max_x=16.25)
-            5: [18.4, 4.5],   # outer-close, bottom
-            6: [18.4, 14.5],  # outer-close, top
-            7: [16.35, 7.5],  # inner-close, bottom
-            8: [16.35, 11.5], # inner-close, top
+            #5: [18.4, 4.5],   # outer-close, bottom
+            #6: [18.4, 14.5],  # outer-close, top
+            #7: [16.35, 7.5],  # inner-close, bottom
+            #8: [16.35, 11.5], # inner-close, top
             # Top corridor (y near outer_max_y=18.5 and inner_max_y=16.25)
-            9: [4.5, 18.4],   # outer-close, left
-            10: [14.5, 18.4], # outer-close, right
-            11: [7.5, 16.35], # inner-close, left
-            12: [11.5, 16.35],# inner-close, right
+            #9: [4.5, 18.4],   # outer-close, left
+            #10: [14.5, 18.4], # outer-close, right
+            #11: [7.5, 16.35], # inner-close, left
+            #12: [11.5, 16.35],# inner-close, right
             # Left corridor (x near outer_min_x=2.0 and inner_min_x=4.25)
-            13: [2.1, 4.5],   # outer-close, bottom
-            14: [2.1, 14.5],  # outer-close, top
-            15: [4.15, 7.5],  # inner-close, bottom
-            16: [4.15, 11.5], # inner-close, top
+            #13: [2.1, 4.5],   # outer-close, bottom
+            #14: [2.1, 14.5],  # outer-close, top
+            #15: [4.15, 7.5],  # inner-close, bottom
+            #16: [4.15, 11.5], # inner-close, top
+            
+            # Left corridor
+            1: [2.07, 6.34],    
+            2: [3.67, 10.78],   
+            3: [2.07, 15.06],   
+            4: [3.67, 17.72],  
+            # Top corridor
+            5: [4.66, 16.05],   
+            6: [8.23, 17.72],  
+            7: [13.28, 16.49],  
+            8: [16.11, 17.72], 
+            # Right corridor
+            9: [17.66, 11.84],   
+            10: [17.59, 2.01], 
+            #11: [7.5, 16.35], 
+            #12: [11.5, 16.35],
+            # bottom corridor 
+            13: [5.7, 3.6],   
+            14: [10.5, 3.6],  
+            #15: [4.15, 7.5], 
+            #16: [4.15, 11.5],
         }
         # Walls defined as line segments: ((x1, y1), (x2, y2)) in meters
         # Define outer bounds explicitly then compute inner bounds using a margin
         outer_min_x = 2.0
         outer_min_y = 2.0
-        outer_max_x = 18.5
-        outer_max_y = 18.5
+        outer_max_x = 17.7
+        outer_max_y = 17.7
 
         self.outer_walls = [
             ((outer_min_x, outer_min_y), (outer_max_x, outer_min_y)),   # Bottom
@@ -43,7 +64,7 @@ class Environment:
         ]
 
         # Desired uniform gap from outer walls to inner walls (meters)
-        margin = 2.25
+        margin = 1.67
 
         inner_min_x = outer_min_x + margin
         inner_min_y = outer_min_y + margin
