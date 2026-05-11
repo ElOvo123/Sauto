@@ -72,7 +72,7 @@ def main():
     current_lap_particle_paths = {}
     displayed_best_trajectory = []
 
-    true_start_pose = [3.0, 3.0, 0.0]
+    true_start_pose = [3.0, 3.0, math.pi / 2]
     robot = SimulatedTurtlebot(*true_start_pose)
     slam = FastSLAM1(initial_pose=true_start_pose)
 
@@ -94,12 +94,12 @@ def main():
     v, w = 0.0, 0.0
 
     auto_drive = False
-    auto_speed = 3.0
+    auto_speed = 1.0
 
-    left_x = 3.125
-    right_x = 17.375
-    bottom_y = 3.125
-    top_y = 17.375
+    left_x = 3.3
+    right_x = 17.0
+    bottom_y = 3.3
+    top_y = 17.0
 
     auto_state = "BOTTOM"
 
@@ -108,6 +108,15 @@ def main():
         threshold=0.5
     )
 
+    auto_waypoint_index = 0
+
+    auto_waypoints = [
+        (left_x, bottom_y),
+        (left_x, top_y),
+        (right_x, top_y),
+        (right_x, bottom_y),
+        (left_x, bottom_y),
+    ]
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -128,13 +137,14 @@ def main():
 
                     robot.x = left_x
                     robot.y = bottom_y
-                    robot.theta = 0.0
+                    robot.theta = math.pi / 2
 
                     robot.odom_x = robot.x
                     robot.odom_y = robot.y
                     robot.odom_theta = robot.theta
 
-                    auto_state = "BOTTOM"
+                    auto_state = "LEFT"
+                    auto_waypoint_index = 1
 
                     true_trajectory = []
                     current_lap_particle_paths = {}
@@ -143,46 +153,40 @@ def main():
                     lap_detector.reset()
 
         if auto_drive:
-            corner_margin = 0.6
             k_heading = 3.0
-            k_center = 0.8
-            max_w = 1.2
+            max_w = 1.0
+            waypoint_radius = 0.25
 
-            if auto_state == "BOTTOM" and robot.x >= right_x - corner_margin:
-                auto_state = "RIGHT"
-            elif auto_state == "RIGHT" and robot.y >= top_y - corner_margin:
-                auto_state = "TOP"
-            elif auto_state == "TOP" and robot.x <= left_x + corner_margin:
-                auto_state = "LEFT"
-            elif auto_state == "LEFT" and robot.y <= bottom_y + corner_margin:
-                auto_state = "BOTTOM"
+            target_x, target_y = auto_waypoints[auto_waypoint_index]
 
-            if auto_state == "BOTTOM":
-                target_theta = 0.0
-                cross_track_error = robot.y - bottom_y
-            elif auto_state == "RIGHT":
-                target_theta = math.pi / 2
-                cross_track_error = right_x - robot.x
-            elif auto_state == "TOP":
-                target_theta = math.pi
-                cross_track_error = top_y - robot.y
-            elif auto_state == "LEFT":
-                target_theta = -math.pi / 2
-                cross_track_error = robot.x - left_x
+            dx = target_x - robot.x
+            dy = target_y - robot.y
+
+            distance_to_target = math.hypot(dx, dy)
+            target_theta = math.atan2(dy, dx)
 
             angle_error = (
                 target_theta - robot.theta + math.pi
             ) % (2 * math.pi) - math.pi
 
-            w = k_heading * angle_error - k_center * cross_track_error
+            if distance_to_target < waypoint_radius:
+                auto_waypoint_index += 1
+
+                if auto_waypoint_index >= len(auto_waypoints):
+                    auto_waypoint_index = 1
+
+                target_x, target_y = auto_waypoints[auto_waypoint_index]
+
+            w = k_heading * angle_error
             w = max(-max_w, min(max_w, w))
 
-            if abs(angle_error) > 0.25:
-                v = 1.0
+            if abs(angle_error) > 0.15:
+                v = 0.3
             else:
                 v = auto_speed
 
-        robot.move(v, w, DT, env.outer_walls)
+        all_walls = env.outer_walls + env.inner_walls
+        robot.move(v, w, DT, all_walls)
 
         bx, by = robot.get_body_center()
         true_trajectory.append((bx, by))
