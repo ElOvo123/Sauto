@@ -83,10 +83,22 @@ class FastSLAM1(ParticleFilter):
         # Calcular a diferença desde a ÚLTIMA VEZ que o SLAM executou um ciclo
         dx = current_odom[0] - self.prev_odom[0]
         dy = current_odom[1] - self.prev_odom[1]
-        trans = math.hypot(dx, dy)
-        
-        rot_total = (current_odom[2] - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
-        
+
+        prev_theta = self.prev_odom[2]
+
+        # Convert odometry displacement from global frame to previous robot frame
+        local_dx = math.cos(prev_theta) * dx + math.sin(prev_theta) * dy
+        local_dy = -math.sin(prev_theta) * dx + math.cos(prev_theta) * dy
+
+        # Forward motion in robot frame
+        trans = local_dx
+
+        # Sideways movement should be small for differential-drive robot.
+        # We ignore local_dy to avoid fake rotations caused by odometry noise.
+        rot1 = 0.0
+        rot2 = (current_odom[2] - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
+        rot_total = rot2
+
         # --- A BARREIRA ESPACIAL ---
         # Se não andou o suficiente nem rodou o suficiente, devolve as poses antigas e NÃO faz nada!
         if trans < self.min_trans_update and abs(rot_total) < self.min_rot_update:
@@ -95,44 +107,32 @@ class FastSLAM1(ParticleFilter):
             if not self.is_initialized and len(measurements) > 0:
                 self._update_maps(measurements)
                 self.is_initialized = True
-                
+
             best_p = max(self.particles, key=lambda p: p.weight)
             est_pose = best_p.state.tolist()
-            est_map = {m_id: [ekf.state_estimate[0], ekf.state_estimate[1]] for m_id, ekf in best_p.landmarks.items()}
+            est_map = {m_id: [ekf.state_estimate[0], ekf.state_estimate[1]]for m_id, ekf in best_p.landmarks.items()}
             particles_poses = [[p.state[0], p.state[1], p.state[2], p.weight] for p in self.particles]
             return particles_poses, est_pose, est_map
 
-        # --- SE CHEGOU AQUI, O ROBÔ MOVEU-SE O SUFICIENTE ---
-        dir_angle = math.atan2(dy, dx)
-        diff_angle = (dir_angle - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
-        
-        if abs(diff_angle) > math.pi / 2.0:
-            trans = -trans
-            dir_angle = (dir_angle + math.pi) % (2 * math.pi) - math.pi
-            
-        rot1 = dir_angle - self.prev_odom[2]
-        rot1 = (rot1 + math.pi) % (2 * math.pi) - math.pi 
-        rot2 = current_odom[2] - self.prev_odom[2] - rot1
-        rot2 = (rot2 + math.pi) % (2 * math.pi) - math.pi
-        
         # Atualiza o marco de referência da odometria APENAS quando o ciclo vai correr
         self.prev_odom = np.array(current_odom, dtype=float)
 
         # 1. FASE PREDICT: Salto Cego
         self._predict(rot1, trans, rot2)
-            
+
         # 2. FASE UPDATE: Avaliar
         if len(measurements) > 0:
             self._update_maps(measurements)
             self.is_initialized = True
-            
+
+        #Resample
         if self.effective_sample_size() < self.resample_threshold:
             self.systematic_resample()
 
         # Extrair a melhor estimativa
         best_p = max(self.particles, key=lambda p: p.weight)
         est_pose = best_p.state.tolist()
-        
+
         est_map = {m_id: [ekf.state_estimate[0], ekf.state_estimate[1]] for m_id, ekf in best_p.landmarks.items()}
         particles_poses = [[p.state[0], p.state[1], p.state[2], p.weight] for p in self.particles]
 
