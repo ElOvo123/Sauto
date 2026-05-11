@@ -114,6 +114,15 @@ def main():
         threshold=3.0
     )
 
+    auto_waypoint_index = 0
+
+    auto_waypoints = [
+        (left_x, bottom_y),
+        (left_x, top_y),
+        (right_x, top_y),
+        (right_x, bottom_y),
+        (left_x, bottom_y),
+    ]
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
