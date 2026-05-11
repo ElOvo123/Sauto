@@ -66,11 +66,11 @@ class SimulatedTurtlebot:
         next_by = next_y - self.body_offset * math.sin(next_theta)
 
         collision = False
-        for (p1, p2) in walls:
-            dist = distance_point_to_segment(next_bx, next_by, p1[0], p1[1], p2[0], p2[1])
-            if dist < self.radius:
-                collision = True
-                break
+        # for (p1, p2) in walls:
+        #     dist = distance_point_to_segment(next_bx, next_by, p1[0], p1[1], p2[0], p2[1])
+        #     if dist < self.radius:
+        #         collision = True
+        #         break
         
         if not collision:
             self.x = next_x
