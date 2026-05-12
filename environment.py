@@ -1,11 +1,13 @@
+import random
+
 import pygame
 
 class Environment:
-    def __init__(self):
+    def __init__(self, fake_environment=True, landmarks_per_corridor=10, seed=None):
         # True map landmarks {id: [x, y]}
-        # Landmarks: 4 per corridor (bottom, right, top, left).
-        # For each corridor there are 2 landmarks 0.1 m from the outer wall
-        # and 2 landmarks 0.1 m from the inner wall. IDs 1..16.
+        # fake_environment=True generates random landmark positions inside each corridor.
+        # landmarks_per_corridor can be an int (same count for all corridors) or a dict.
+        self.random = random.Random(seed)
 
         self.doors = {
             #Left corridor
@@ -47,41 +49,8 @@ class Environment:
             
         }
 
-        fake_environment = False
         if fake_environment == True:
-            self.landmarks = {
-                # =========================
-                # LEFT CORRIDOR
-                # =========================
-                1:  [2.2, 4.5],
-                2:  [2.2, 8.0],
-                3:  [2.2, 12.0],
-                4:  [2.2, 15.5],
-
-                # =========================
-                # TOP CORRIDOR
-                # =========================
-                5:  [4.5, 17.8],
-                6:  [8.0, 17.8],
-                7:  [12.0, 17.8],
-                8:  [15.5, 17.8],
-
-                # =========================
-                # RIGHT CORRIDOR
-                # =========================
-                9:  [17.8, 15.5],
-                10: [17.8, 12.0],
-                11: [17.8, 8.0],
-                12: [17.8, 4.5],
-
-                # =========================
-                # BOTTOM CORRIDOR
-                # =========================
-                13: [15.5, 2.2],
-                14: [12.0, 2.2],
-                15: [8.0, 2.2],
-                16: [4.5, 2.2],
-            }
+            self.landmarks = self._generate_fake_landmarks(landmarks_per_corridor)
         else:
             self.landmarks = {
                 # Left corridor
@@ -133,6 +102,93 @@ class Environment:
             ((inner_max_x, inner_max_y), (inner_min_x, inner_max_y)),   # Top
             ((inner_min_x, inner_max_y), (inner_min_x, inner_min_y)),   # Left
         ]
+
+    def _generate_fake_landmarks(self, landmarks_per_corridor):
+        # Corridor boundaries used by the fake environment.
+        outer_min_x = 2.0
+        outer_min_y = 2.0
+        outer_max_x = 17.75
+        outer_max_y = 17.75
+
+        inner_min_x = 3.67
+        inner_max_x = 16.08
+        inner_min_y = 3.67
+        inner_max_y = 16.08
+
+        def count_for(corridor_name):
+            if isinstance(landmarks_per_corridor, dict):
+                return int(landmarks_per_corridor.get(corridor_name, 0))
+            return int(landmarks_per_corridor)
+
+        def sorted_positions(count, low, high):
+            if count <= 0:
+                return []
+            if count == 1:
+                return [(low + high) / 2.0]
+            values = [self.random.uniform(low, high) for _ in range(count)]
+            values.sort()
+            return values
+
+        landmarks = {}
+        landmark_id = 1
+
+        def add_landmarks_for_corridor(corridor_name, wall_placements, fixed_axis_is_x):
+            nonlocal landmark_id
+
+            count = count_for(corridor_name)
+            if count <= 0:
+                return
+
+            for _ in range(count):
+                fixed_value, span_low, span_high = self.random.choice(wall_placements)
+                variable_value = self.random.uniform(span_low, span_high)
+                if fixed_axis_is_x:
+                    landmarks[landmark_id] = [fixed_value, variable_value]
+                else:
+                    landmarks[landmark_id] = [variable_value, fixed_value]
+                landmark_id += 1
+
+        # Left corridor: x is fixed on either wall, y uses the corresponding wall span.
+        add_landmarks_for_corridor(
+            "left",
+            [
+                (outer_min_x, outer_min_y, outer_max_y),
+                (inner_min_x, inner_min_y, inner_max_y),
+            ],
+            True,
+        )
+
+        # Top corridor: y is fixed on either wall, x uses the corresponding wall span.
+        add_landmarks_for_corridor(
+            "top",
+            [
+                (outer_max_y, outer_min_x, outer_max_x),
+                (inner_max_y, inner_min_x, inner_max_x),
+            ],
+            False,
+        )
+
+        # Right corridor: x is fixed on either wall, y uses the corresponding wall span.
+        add_landmarks_for_corridor(
+            "right",
+            [
+                (outer_max_x, outer_min_y, outer_max_y),
+                (inner_max_x, inner_min_y, inner_max_y),
+            ],
+            True,
+        )
+
+        # Bottom corridor: y is fixed on either wall, x uses the corresponding wall span.
+        add_landmarks_for_corridor(
+            "bottom",
+            [
+                (outer_min_y, outer_min_x, outer_max_x),
+                (inner_min_y, inner_min_x, inner_max_x),
+            ],
+            False,
+        )
+
+        return landmarks
 
     def draw(self, screen, to_screen_fn):
         # Draw Walls
