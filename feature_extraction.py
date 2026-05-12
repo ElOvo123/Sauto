@@ -15,7 +15,7 @@ class ArucoFeatureExtractor:
         self.parameters = cv2.aruco.DetectorParameters_create()
 
         # Marker real size in meters
-        self.marker_size = 0.10  # 10 cm
+        self.marker_size = 0.16872  # 16.872 cm
 
         # Approximate camera calibration for 1280x800 image
         # Replace these with your real camera calibration if available
