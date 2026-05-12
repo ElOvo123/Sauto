@@ -4,6 +4,7 @@ import sys
 import math
 import csv
 import os
+import numpy as np
 import matplotlib.pyplot as plt
 
 from turtlebot import SimulatedTurtlebot
@@ -70,8 +71,10 @@ def plot_final_results(
     true_landmarks,
     estimated_landmarks,
     position_error_history,
+    position_error_steps=None,
     odom_error_history=None,
     landmark_error_history=None,
+    landmark_error_steps=None,
 ):
     plt.figure(figsize=(9, 9))
 
@@ -121,13 +124,30 @@ def plot_final_results(
     plt.figure(figsize=(10, 5))
 
     if len(position_error_history) > 0:
-        plt.plot(position_error_history, label="FastSLAM position error")
+        if position_error_steps is None or len(position_error_steps) != len(position_error_history):
+            position_error_steps = list(range(len(position_error_history)))
+        plt.plot(
+            position_error_steps,
+            position_error_history,
+            #marker="o",
+            linewidth=2,
+            label="FastSLAM position error",
+        )
 
     if odom_error_history is not None and len(odom_error_history) > 0:
-        plt.plot(odom_error_history, label="Odometry position error", linestyle="--")
+        odom_steps = list(range(len(odom_error_history)))
+        plt.plot(odom_steps, odom_error_history, label="Odometry position error", linestyle="--")
 
     if landmark_error_history is not None and len(landmark_error_history) > 0:
-        plt.plot(landmark_error_history, label="Landmark error")
+        if landmark_error_steps is None or len(landmark_error_steps) != len(landmark_error_history):
+            landmark_error_steps = list(range(len(landmark_error_history)))
+        plt.scatter(
+            landmark_error_steps,
+            landmark_error_history,
+            marker="s",
+            s=25,
+            label="Landmark error",
+        )
 
     plt.xlabel("Time step")
     plt.ylabel("Error [m]")
@@ -175,6 +195,10 @@ def main():
     odom_trajectory = []
     estimated_trajectory = []
     odom_error_history = []
+    best_estimated_landmarks = {}
+    lap_start_trajectory_index = 0
+    lap_error_step_history = []
+    landmark_error_step_history = []
 
     running = True
     v, w = 0.0, 0.0
@@ -288,6 +312,10 @@ def main():
                     odom_error_history = []
                     position_error_history = []
                     landmark_error_history = []
+                    best_estimated_landmarks = {}
+                    lap_start_trajectory_index = 0
+                    lap_error_step_history = []
+                    landmark_error_step_history = []
                     true_pose_history = []
                     estimated_pose_history = []
 
@@ -398,11 +426,62 @@ def main():
                     for x, y, weight in current_lap_particle_paths[best_particle_index]
                 ]
 
+                lap_true_trajectory = true_trajectory[lap_start_trajectory_index:]
+                lap_len = min(len(lap_true_trajectory), len(displayed_best_trajectory))
+
+                if lap_len > 0:
+                    lap_position_errors = []
+                    for i in range(lap_len):
+                        true_x, true_y = lap_true_trajectory[i]
+                        best_x, best_y = displayed_best_trajectory[i]
+                        lap_position_errors.append(
+                            math.hypot(true_x - best_x, true_y - best_y)
+                        )
+
+                    position_error_history.extend(lap_position_errors)
+                    lap_error_step_history.extend(
+                        range(
+                            lap_start_trajectory_index,
+                            lap_start_trajectory_index + lap_len,
+                        )
+                    )
+
+                best_estimated_landmarks = {
+                    lm_id: [coords[0], coords[1]]
+                    for lm_id, coords in est_map.items()
+                }
+
+                lm_errors = []
+                for lm_id, est_lm in best_estimated_landmarks.items():
+                    if lm_id in env.landmarks:
+                        true_lm = env.landmarks[lm_id]
+                        true_x, true_y = true_lm
+                        est_x, est_y = est_lm
+                        lm_errors.append(math.hypot(true_x - est_x, true_y - est_y))
+
+                if len(lm_errors) > 0:
+                    landmark_error_history.extend(lm_errors)
+                    if lap_len > 1:
+                        landmark_steps = [
+                            int(round(step))
+                            for step in np.linspace(
+                                lap_start_trajectory_index,
+                                lap_start_trajectory_index + lap_len - 1,
+                                num=len(lm_errors),
+                            )
+                        ]
+                    else:
+                        landmark_steps = [lap_start_trajectory_index] * len(lm_errors)
+
+                    landmark_error_step_history.extend(landmark_steps)
+
                 print(
                     f"Lap best particle: {best_particle_index}, "
                     f"weight={best_final_weight:.6f}, "
                     f"points={len(displayed_best_trajectory)}"
                 )
+
+                lap_start_trajectory_index = len(true_trajectory)
 
             current_lap_particle_paths = {}
 
@@ -441,39 +520,6 @@ def main():
         true_pose = [robot.x, robot.y, robot.theta]
         true_pose_history.append(true_pose)
         estimated_pose_history.append(est_pose)
-
-        aligned_est_x, aligned_est_y = alignment.align_pose(
-            est_pose[0],
-            est_pose[1]
-        )
-
-        pos_error = math.hypot(
-            robot.x - aligned_est_x,
-            robot.y - aligned_est_y
-        )
-
-        position_error_history.append(pos_error)
-
-        lm_errors = []
-
-        for lm_id, est_lm in est_map.items():
-            if lm_id in env.landmarks:
-                true_lm = env.landmarks[lm_id]
-
-                aligned_lm_x, aligned_lm_y = alignment.align_pose(
-                    est_lm[0],
-                    est_lm[1]
-                )
-
-                lm_error = math.hypot(
-                    true_lm[0] - aligned_lm_x,
-                    true_lm[1] - aligned_lm_y
-                )
-
-                lm_errors.append(lm_error)
-
-        if len(lm_errors) > 0:
-            landmark_error_history.append(sum(lm_errors) / len(lm_errors))
 
         screen.fill((240, 240, 240))
 
@@ -574,12 +620,14 @@ def main():
     plot_final_results(
         true_trajectory=true_trajectory,
         odom_trajectory=odom_trajectory,
-        estimated_trajectory=estimated_trajectory,
+        estimated_trajectory=displayed_best_trajectory,
         true_landmarks=env.landmarks,
-        estimated_landmarks=est_map,
+        estimated_landmarks=best_estimated_landmarks,
         position_error_history=position_error_history,
+        position_error_steps=lap_error_step_history,
         odom_error_history=odom_error_history,
         landmark_error_history=landmark_error_history,
+        landmark_error_steps=landmark_error_step_history,
     )
 
     pygame.quit()

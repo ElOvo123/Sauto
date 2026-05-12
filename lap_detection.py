@@ -15,6 +15,10 @@ class LandmarkLapDetector:
 
         self.frame_count = 0
 
+        # Pose-based fallback lap detection.
+        self.in_start_area = False
+        self.has_left_start_area = False
+
         # Prevent early false laps
         self.min_frames_before_lap = 300
 
@@ -30,6 +34,8 @@ class LandmarkLapDetector:
         self.absent_ids = set()
 
         self.frame_count = 0
+        self.in_start_area = False
+        self.has_left_start_area = False
 
     def update(self, sensor_data, robot_pose=None):
         self.frame_count += 1
@@ -47,6 +53,13 @@ class LandmarkLapDetector:
             m[0] for m in sensor_data
         ).intersection(self.start_landmark_ids)
 
+        # Track whether the robot has left and re-entered the start area.
+        entered_start_area = near_start_area and not self.in_start_area
+        if not near_start_area and self.in_start_area:
+            self.has_left_start_area = True
+
+        self.in_start_area = near_start_area
+
         # Ignore landmark detections outside start area
         if not near_start_area:
             visible_ids = set()
@@ -59,15 +72,13 @@ class LandmarkLapDetector:
             if landmark_id not in visible_ids:
                 self.absent_ids.add(landmark_id)
 
-        # Detect returning landmark
         if (
             self.frame_count > self.min_frames_before_lap
             and self.cooldown == 0
         ):
-            returning_ids = visible_ids.intersection(
-                self.absent_ids
-            )
+            returning_ids = visible_ids.intersection(self.absent_ids)
 
+            landmark_based_lap = False
             if len(returning_ids) > 0:
                 lap_id = list(returning_ids)[0]
 
@@ -83,6 +94,27 @@ class LandmarkLapDetector:
                     f"{self.lap_count}"
                 )
 
+                landmark_based_lap = True
+
+            pose_based_lap = (
+                self.has_left_start_area
+                and entered_start_area
+            )
+
+            if pose_based_lap and not landmark_based_lap:
+                self.lap_count += 1
+                self.cooldown = self.cooldown_frames
+                self.has_left_start_area = False
+
+                print(
+                    f"Lap completed by start-area re-entry: "
+                    f"{self.lap_count}"
+                )
+
+                return True
+
+            if landmark_based_lap:
+                self.has_left_start_area = False
                 return True
 
         self.seen_ids.update(visible_ids)

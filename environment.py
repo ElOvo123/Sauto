@@ -132,10 +132,14 @@ class Environment:
         landmarks = {}
         landmark_id = 1
 
-        def add_landmarks_for_corridor(corridor_name, wall_placements, fixed_axis_is_x):
+        # Keep landmark 1 as a stable start landmark so lap detection can trigger.
+        landmarks[landmark_id] = [2.07, self.random.uniform(4.5, 7.5)]
+        landmark_id += 1
+
+        def add_landmarks_for_corridor(corridor_name, wall_placements, fixed_axis_is_x, count_offset=0):
             nonlocal landmark_id
 
-            count = count_for(corridor_name)
+            count = max(0, count_for(corridor_name) - count_offset)
             if count <= 0:
                 return
 
@@ -156,6 +160,7 @@ class Environment:
                 (inner_min_x, inner_min_y, inner_max_y),
             ],
             True,
+            count_offset=1,
         )
 
         # Top corridor: y is fixed on either wall, x uses the corresponding wall span.
