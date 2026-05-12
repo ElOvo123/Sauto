@@ -1,8 +1,9 @@
+from ctypes import alignment
+
 import pygame
 import sys
 import math
-import csv
-import os
+import matplotlib.pyplot as plt
 
 from turtlebot import SimulatedTurtlebot
 from environment import Environment
@@ -61,6 +62,79 @@ class EstimationAlignment:
 
         return aligned_x, aligned_y
 
+def plot_final_results(
+    true_trajectory,
+    odom_trajectory,
+    estimated_trajectory,
+    true_landmarks,
+    estimated_landmarks,
+    position_error_history,
+    odom_error_history=None,
+    landmark_error_history=None,
+):
+    plt.figure(figsize=(9, 9))
+
+    # True trajectory
+    if len(true_trajectory) > 0:
+        true_x = [p[0] for p in true_trajectory]
+        true_y = [p[1] for p in true_trajectory]
+        plt.plot(true_x, true_y, label="True trajectory", linewidth=2)
+
+    # Odometry trajectory
+    if len(odom_trajectory) > 0:
+        odom_x = [p[0] for p in odom_trajectory]
+        odom_y = [p[1] for p in odom_trajectory]
+        plt.plot(odom_x, odom_y, label="Odometry trajectory", linestyle="--")
+
+    # FastSLAM trajectory
+    if len(estimated_trajectory) > 0:
+        est_x = [p[0] for p in estimated_trajectory]
+        est_y = [p[1] for p in estimated_trajectory]
+        plt.plot(est_x, est_y, label="FastSLAM trajectory", linewidth=2)
+
+    # True landmarks
+    if len(true_landmarks) > 0:
+        lm_x = [p[0] for p in true_landmarks.values()]
+        lm_y = [p[1] for p in true_landmarks.values()]
+        plt.scatter(lm_x, lm_y, marker="x", s=80, label="True landmarks")
+
+        for lm_id, (x, y) in true_landmarks.items():
+            plt.text(x + 0.05, y + 0.05, str(lm_id), fontsize=8)
+
+    # Estimated landmarks
+    if len(estimated_landmarks) > 0:
+        est_lm_x = [p[0] for p in estimated_landmarks.values()]
+        est_lm_y = [p[1] for p in estimated_landmarks.values()]
+        plt.scatter(est_lm_x, est_lm_y, marker="s", s=40, label="Estimated landmarks")
+
+    plt.xlabel("x [m]")
+    plt.ylabel("y [m]")
+    plt.title("FastSLAM final map and trajectories")
+    plt.axis("equal")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    # Error plot
+    plt.figure(figsize=(10, 5))
+
+    if len(position_error_history) > 0:
+        plt.plot(position_error_history, label="FastSLAM position error")
+
+    if odom_error_history is not None and len(odom_error_history) > 0:
+        plt.plot(odom_error_history, label="Odometry position error", linestyle="--")
+
+    if landmark_error_history is not None and len(landmark_error_history) > 0:
+        plt.plot(landmark_error_history, label="Landmark error")
+
+    plt.xlabel("Time step")
+    plt.ylabel("Error [m]")
+    plt.title("Error evolution")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
 def main():
     pygame.init()
@@ -96,60 +170,15 @@ def main():
     estimated_pose_history = []
     position_error_history = []
     landmark_error_history = []
+    odom_trajectory = []
+    estimated_trajectory = []
+    odom_error_history = []
 
     running = True
     v, w = 0.0, 0.0
 
     auto_drive = False
     waypoint_index = 0
-
-    # --- CSV replay state ---
-    replay_mode = False
-    replay_controls = []  # list of (t, v, w)
-    replay_index = 0
-    sim_time = 0.0
-    replay_filename = None
-
-    # If called with --replay <file.csv>, preload controls
-    if "--replay" in sys.argv:
-        try:
-            idx = sys.argv.index("--replay")
-            replay_filename = sys.argv[idx + 1]
-            if os.path.exists(replay_filename):
-                with open(replay_filename, newline='') as csvfile:
-                    reader = csv.reader(csvfile)
-                    rows = list(reader)
-
-                # Try to parse header-aware (time, v, w) or plain rows
-                parsed = []
-                for r in rows:
-                    if len(r) < 3:
-                        continue
-                    try:
-                        t = float(r[0])
-                        vv = float(r[1])
-                        ww = float(r[2])
-                        parsed.append((t, vv, ww))
-                    except ValueError:
-                        # skip header or malformed
-                        continue
-
-                if len(parsed) > 0:
-                    # If timestamps are very large (e.g. ROS nanoseconds), convert to seconds
-                    first_t = parsed[0][0]
-                    if first_t > 1e12:
-                        parsed = [(t / 1e9, vv, ww) for (t, vv, ww) in parsed]
-
-                    # Normalize timestamps to start at 0.0 (seconds)
-                    t0 = parsed[0][0]
-                    replay_controls = [(t - t0, vv, ww) for (t, vv, ww) in parsed]
-                    replay_mode = True
-                    replay_index = 0
-                    sim_time = 0.0
-            else:
-                print(f"Replay CSV not found: {replay_filename}")
-        except Exception as e:
-            print("Failed to load replay CSV:", e)
 
     # Go UP first, then right, then down, then left
     waypoints = [
@@ -204,21 +233,15 @@ def main():
                     true_trajectory = []
                     current_lap_particle_paths = {}
                     displayed_best_trajectory = []
+                    odom_trajectory = []
+                    estimated_trajectory = []
+                    odom_error_history = []
+                    position_error_history = []
+                    landmark_error_history = []
+                    true_pose_history = []
+                    estimated_pose_history = []
 
                     lap_detector.reset()
-
-                elif event.key == pygame.K_p:
-                    # toggle replay on/off (only if we have a loaded file)
-                    if len(replay_controls) > 0:
-                        replay_mode = not replay_mode
-                        if replay_mode:
-                            replay_index = 0
-                            sim_time = 0.0
-                            v, w = 0.0, 0.0
-                        else:
-                            v, w = 0.0, 0.0
-                    else:
-                        print("No replay file loaded. Start simulator with: python3 simulator.py --replay path/to/file.csv")
 
         if auto_drive:
             k_heading = 2.0
@@ -254,24 +277,6 @@ def main():
             else:
                 v = 1.2
 
-        # --- if replay_mode, override v,w from csv timeline ---
-        if replay_mode and len(replay_controls) > 0:
-            # advance sim time
-            sim_time += DT
-
-            # advance replay index to current time
-            while replay_index < len(replay_controls) and sim_time >= replay_controls[replay_index][0]:
-                # set current controls to this row
-                _, rv, rw = replay_controls[replay_index]
-                v, w = rv, rw
-                replay_index += 1
-
-            # If we reached the end, stop replaying
-            if replay_index >= len(replay_controls):
-                # Hold final command for one last step then stop
-                v, w = 0.0, 0.0
-                replay_mode = False
-
         all_walls = env.outer_walls + env.inner_walls
         robot.move(v, w, DT, all_walls)
 
@@ -280,6 +285,12 @@ def main():
 
         sensor_data = robot.get_camera_measurements(env.landmarks)
         odom_data = robot.get_odometry()
+        
+        odom_error = math.hypot(
+            robot.x - odom_data[0],
+            robot.y - odom_data[1]
+        )
+        odom_error_history.append(odom_error)
 
         lap_completed = lap_detector.update(
             sensor_data,
@@ -315,6 +326,17 @@ def main():
             current_lap_particle_paths = {}
 
         particles, est_pose, est_map = slam.step(odom_data, sensor_data, DT)
+        
+        # Store trajectories for final plots
+
+        odom_trajectory.append((odom_data[0], odom_data[1]))
+
+        aligned_est_x, aligned_est_y = alignment.align_pose(
+            est_pose[0],
+            est_pose[1]
+        )
+
+        estimated_trajectory.append((aligned_est_x, aligned_est_y))
 
         for particle_index, particle in enumerate(particles):
             px, py, ptheta, pweight = particle
@@ -435,18 +457,9 @@ def main():
             (0, 0, 0)
         )
 
-        # Replay status text
-        if len(replay_controls) > 0:
-            replay_status = "ON" if replay_mode else "OFF"
-            replay_fname = os.path.basename(replay_filename) if replay_filename else "(loaded)"
-            text_replay = my_font.render(f"Replay: {replay_status}  File: {replay_fname}", True, (0, 0, 0))
-        else:
-            text_replay = my_font.render("Replay: none loaded", True, (128, 0, 0))
-
         screen.blit(text_v, (10, 10))
         screen.blit(text_w, (10, 40))
         screen.blit(text_align, (10, 70))
-        screen.blit(text_replay, (10, 100))
 
         pygame.display.flip()
         clock.tick(FPS)
@@ -467,6 +480,17 @@ def main():
         print(f"Final landmark error: {final_landmark_error:.3f} m")
 
     print("================================\n")
+    
+    plot_final_results(
+        true_trajectory=true_trajectory,
+        odom_trajectory=odom_trajectory,
+        estimated_trajectory=estimated_trajectory,
+        true_landmarks=env.landmarks,
+        estimated_landmarks=est_map,
+        position_error_history=position_error_history,
+        odom_error_history=odom_error_history,
+        landmark_error_history=landmark_error_history,
+    )
 
     pygame.quit()
     sys.exit()
