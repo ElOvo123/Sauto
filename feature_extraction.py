@@ -20,8 +20,8 @@ class ArucoFeatureExtractor:
         # Approximate camera calibration for 1280x800 image
         # Replace these with your real camera calibration if available
         self.camera_matrix = np.array([
-            [640.0,   0.0, 640.0],
-            [  0.0, 640.0, 400.0],
+            [261.00813352 ,   0.0, 172.1808022],
+            [  0.0, 262.1472986, 120.76379966],
             [  0.0,   0.0,   1.0]
         ], dtype=np.float32)
 
