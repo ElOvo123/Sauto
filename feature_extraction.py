@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Image
+from nav_msgs.msg import Odometry
 from cv_bridge import CvBridge
 
 import cv2
@@ -14,20 +15,20 @@ class ArucoFeatureExtractor:
         self.dictionary = cv2.aruco.Dictionary_get(dictionary_name)
         self.parameters = cv2.aruco.DetectorParameters_create()
 
-        # Marker real size in meters
-        self.marker_size = 0.16872  # 16.872 cm
+        self.marker_size = 0.16872
 
-        # Approximate camera calibration for 1280x800 image
-        # Replace these with your real camera calibration if available
         self.camera_matrix = np.array([
-            [261.00813352 ,   0.0, 172.1808022],
-            [  0.0, 262.1472986, 120.76379966],
-            [  0.0,   0.0,   1.0]
+            [261.00813352, 0.0, 172.1808022],
+            [0.0, 262.1472986, 120.76379966],
+            [0.0, 0.0, 1.0]
         ], dtype=np.float32)
 
         self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
-    def extract(self, frame):
+        # Stores all positions for each ArUco ID
+        self.aruco_positions = {}
+
+    def extract(self, frame, robot_pose=None):
         features = []
 
         if frame is None:
@@ -53,15 +54,16 @@ class ArucoFeatureExtractor:
             self.dist_coeffs
         )
 
-        for marker_corners, marker_id, rvec, tvec in zip(
+        for marker_corners, aruco_id, rvec, tvec in zip(
             corners,
             ids.flatten(),
             rvecs,
             tvecs
         ):
+            aruco_id = int(aruco_id)
+
             pts = marker_corners[0]
             center = np.mean(pts, axis=0)
-            center_int = tuple(center.astype(int))
 
             x = float(tvec[0][0])
             y = float(tvec[0][1])
@@ -69,25 +71,38 @@ class ArucoFeatureExtractor:
 
             range_m = math.sqrt(x**2 + y**2 + z**2)
             bearing_rad = math.atan2(x, z)
-            bearing_deg = math.degrees(bearing_rad)
+
+            if robot_pose is not None:
+                rx, ry, rtheta = robot_pose
+
+                landmark_x = rx + range_m * math.cos(rtheta + bearing_rad)
+                landmark_y = ry + range_m * math.sin(rtheta + bearing_rad)
+            else:
+                landmark_x = x
+                landmark_y = z
+
+            # Store positions
+            if aruco_id not in self.aruco_positions:
+                self.aruco_positions[aruco_id] = []
+
+            self.aruco_positions[aruco_id].append([
+                float(landmark_x),
+                float(landmark_y)
+            ])
 
             features.append({
-                "id": int(marker_id),
-                "type": "aruco",
-                "corners": pts,
-                "center_px": center,
-                "range_m": range_m,
-                "bearing_rad": bearing_rad,
-                "bearing_deg": bearing_deg,
-                "tvec": tvec,
-                "rvec": rvec
+                "aruco_id": aruco_id,
+                "landmark_x": float(landmark_x),
+                "landmark_y": float(landmark_y),
             })
+
+            center_int = tuple(center.astype(int))
 
             cv2.circle(frame, center_int, 5, (0, 0, 255), -1)
 
             cv2.putText(
                 frame,
-                f"ID {int(marker_id)} R={range_m:.2f}m B={bearing_deg:.1f}deg",
+                f"A{aruco_id}",
                 center_int,
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -97,6 +112,22 @@ class ArucoFeatureExtractor:
 
         return features
 
+    def get_aruco_positions(self):
+        return self.aruco_positions
+
+    def get_mean_positions(self):
+        mean_positions = {}
+
+        for aruco_id, positions in self.aruco_positions.items():
+            positions_np = np.array(positions)
+
+            mean_x = np.mean(positions_np[:, 0])
+            mean_y = np.mean(positions_np[:, 1])
+
+            mean_positions[aruco_id] = [mean_x, mean_y]
+
+        return mean_positions
+
 
 class ArucoNode(Node):
     def __init__(self):
@@ -105,28 +136,66 @@ class ArucoNode(Node):
         self.bridge = CvBridge()
         self.extractor = ArucoFeatureExtractor()
 
+        self.current_pose = None
+
         cv2.namedWindow("Aruco Detection", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Aruco Detection", 1280, 800)
 
-        self.sub = self.create_subscription(
+        self.image_sub = self.create_subscription(
             Image,
             "/image_raw",
             self.image_callback,
             10
         )
 
-        self.get_logger().info("Aruco node started, waiting for /image_raw...")
+        self.odom_sub = self.create_subscription(
+            Odometry,
+            "/odom",
+            self.odom_callback,
+            10
+        )
+
+        self.get_logger().info(
+            "Aruco node started, waiting for /image_raw and /odom..."
+        )
+
+    def odom_callback(self, msg):
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+
+        q = msg.pose.pose.orientation
+
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+
+        theta = math.atan2(siny_cosp, cosy_cosp)
+
+        self.current_pose = [x, y, theta]
 
     def image_callback(self, msg):
-        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        frame = self.bridge.imgmsg_to_cv2(
+            msg,
+            desired_encoding="bgr8"
+        )
 
-        features = self.extractor.extract(frame)
+        features = self.extractor.extract(
+            frame,
+            self.current_pose
+        )
+
+        printed_ids = set()
 
         for f in features:
-            self.get_logger().info(
-                f"ID={f['id']} range={f['range_m']:.2f} m "
-                f"bearing={f['bearing_deg']:.1f} deg"
-            )
+            aruco_id = f["aruco_id"]
+
+            if aruco_id not in printed_ids:
+                printed_ids.add(aruco_id)
+
+                self.get_logger().info(
+                    f"Aruco ID={aruco_id} "
+                    f"pos=({f['landmark_x']:.2f}, "
+                    f"{f['landmark_y']:.2f})"
+                )
 
         cv2.imshow("Aruco Detection", frame)
         cv2.waitKey(1)
@@ -134,12 +203,27 @@ class ArucoNode(Node):
 
 def main():
     rclpy.init()
+
     node = ArucoNode()
 
     try:
         rclpy.spin(node)
+
     except KeyboardInterrupt:
         pass
+
+    print("\n===== MEAN ARUCO POSITIONS =====")
+
+    mean_positions = node.extractor.get_mean_positions()
+
+    for aruco_id, mean_pos in mean_positions.items():
+        print(
+            f"Aruco ID {aruco_id}: "
+            f"mean_x={mean_pos[0]:.3f}, "
+            f"mean_y={mean_pos[1]:.3f}"
+        )
+
+    print("================================\n")
 
     node.destroy_node()
     rclpy.shutdown()
