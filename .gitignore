@@ -1,2 +1,4 @@
 *.db3
 rosbag2_*/
+__pycache__/
+*.pyc
