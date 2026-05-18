@@ -15,7 +15,7 @@ class ArucoFeatureExtractor:
         self.dictionary = cv2.aruco.Dictionary_get(dictionary_name)
         self.parameters = cv2.aruco.DetectorParameters_create()
 
-        self.marker_size = 0.16872
+        self.marker_size = 0.151 
 
         self.camera_matrix = np.array([
             [261.00813352, 0.0, 172.1808022],
@@ -69,7 +69,7 @@ class ArucoFeatureExtractor:
             y = float(tvec[0][1])
             z = float(tvec[0][2])
 
-            range_m = math.sqrt(x**2 + y**2 + z**2)
+            range_m = math.sqrt(x**2 + z**2)
             bearing_rad = math.atan2(x, z)
 
             if robot_pose is not None:
@@ -107,6 +107,26 @@ class ArucoFeatureExtractor:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (0, 255, 0),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"r={range_m:.2f}m b={math.degrees(bearing_rad):.1f}deg",
+                (center_int[0], center_int[1] + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 0, 0),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"x={landmark_x:.2f} y={landmark_y:.2f}",
+                (center_int[0], center_int[1] + 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 255),
                 2
             )
 

@@ -116,6 +116,7 @@ class FastSlam_ROS(Node):
             lz = f["landmark_y"]
             r = math.hypot(lx, lz)
             b = math.atan2(-lx, lz) 
+            print(f"Feature {f['aruco_id']}: range={r:.2f}, bearing={b:.2f}")
             
             measurements.append([f["aruco_id"], r, b])
 
