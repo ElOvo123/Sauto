@@ -3,7 +3,7 @@ import random
 import pygame
 
 class Environment:
-    def __init__(self, fake_environment=True, landmarks_per_corridor=10, seed=None):
+    def __init__(self, fake_environment=True, landmarks_per_corridor=20, seed=None):
         # True map landmarks {id: [x, y]}
         # fake_environment=True generates random landmark positions inside each corridor.
         # landmarks_per_corridor can be an int (same count for all corridors) or a dict.

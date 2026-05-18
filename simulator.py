@@ -626,8 +626,8 @@ def main():
         position_error_history=position_error_history,
         position_error_steps=lap_error_step_history,
         odom_error_history=odom_error_history,
-        landmark_error_history=landmark_error_history,
-        landmark_error_steps=landmark_error_step_history,
+        #landmark_error_history=landmark_error_history,
+        #landmark_error_steps=landmark_error_step_history,
     )
 
     pygame.quit()

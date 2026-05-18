@@ -75,8 +75,8 @@ class FastSLAM1(ParticleFilter):
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
-        self.min_trans_update = 0.00  
-        self.min_rot_update = 0.00   
+        self.min_trans_update = 0.05  # Tem de andar 5cm
+        self.min_rot_update = 0.05    # Ou rodar ~3 graus   
         self.is_initialized = False
 
     def step(self, current_odom, measurements, dt):
