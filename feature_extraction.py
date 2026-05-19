@@ -54,7 +54,6 @@ class ArucoFeatureExtractor:
             self.dist_coeffs
         )
 
-        
         for marker_corners, aruco_id, rvec, tvec in zip(
             corners,
             ids.flatten(),
@@ -93,8 +92,8 @@ class ArucoFeatureExtractor:
 
             features.append({
                 "aruco_id": aruco_id,
-                "range": float(range_m),
-                "bearing": float(bearing_rad),
+                "landmark_x": float(landmark_x),
+                "landmark_y": float(landmark_y),
             })
 
             center_int = tuple(center.astype(int))
@@ -130,7 +129,7 @@ class ArucoFeatureExtractor:
                 (0, 255, 255),
                 2
             )
-            
+
         return features
 
     def get_aruco_positions(self):
@@ -214,8 +213,8 @@ class ArucoNode(Node):
 
                 self.get_logger().info(
                     f"Aruco ID={aruco_id} "
-                    f"range={f['range']:.2f}m "
-                    f"bearing={math.degrees(f['bearing']):.1f}deg"
+                    f"pos=({f['landmark_x']:.2f}, "
+                    f"{f['landmark_y']:.2f})"
                 )
 
         cv2.imshow("Aruco Detection", frame)

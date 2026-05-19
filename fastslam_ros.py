@@ -3,7 +3,6 @@
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs import msg
 from sensor_msgs.msg import CompressedImage, Image, PointCloud2, PointField
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped, Quaternion
@@ -51,10 +50,8 @@ class FastSlam_ROS(Node):
         self.latest_odom = None
         self.slam = None
         self.last_time = None
-        self.best_particle_path = []
-        self.origin_set = False
-        self.origin_x = 0.0
-        self.origin_y = 0.0
+        self.best_weight_path = []
+
 
         #Subscrições:
 
@@ -74,9 +71,8 @@ class FastSlam_ROS(Node):
         self.map_pub = self.create_publisher(PointCloud2, '/fastslam/map_markers', 10)
         #Publicar o tópico com a posição do robo
         self.pose_pub = self.create_publisher(PoseStamped, '/fastslam/robot_pose', 10)
-        #Publicar trajetória da melhor partícula
-        self.best_particle_pub = self.create_publisher(PointCloud2, '/fastslam/best_particle_path', 10)
-
+        #Publicar o tópico com a melhor trajetória
+        self.best_weight_path_pub = self.create_publisher(PointCloud2, '/fastslam/best_weight_path', 10)
 
         #O logger é semelhante a um print, mas para além disso cria um tópico ros com os loggs
         self.get_logger().info("FastSLAM ROS Node iniciado!")
@@ -84,34 +80,10 @@ class FastSlam_ROS(Node):
     #Função chamada sempre que se recebe uma mensagem no tópico da odometria
     def odometria (self, msg):
 
-        x_raw = msg.pose.pose.position.x
-        y_raw = msg.pose.pose.position.y
-        theta_raw = euler_to_quaternion(msg.pose.pose.orientation)
-
-        # Store the first odometry position as local origin
-        if not self.origin_set:
-            self.origin_x = x_raw
-            self.origin_y = y_raw
-            self.origin_set = True
-
-        # Convert odometry to local coordinates
-        x_local = x_raw - self.origin_x
-        y_local = y_raw - self.origin_y
-
-        # Alignment parameters
-        rotation_deg = 0#-29
-        scale = 1#0.96
-        offset_x = 0#3.2
-        offset_y = 0#1.2
-
-        rotation_rad = math.radians(rotation_deg)
-
-        # Apply scale + rotation + translation
-        x = scale * (x_local * math.cos(rotation_rad) - y_local * math.sin(rotation_rad)) + offset_x
-        y = scale * (x_local * math.sin(rotation_rad) + y_local * math.cos(rotation_rad)) + offset_y
-
-        theta = theta_raw + rotation_rad
-        theta = (theta + math.pi) % (2 * math.pi) - math.pi
+        #Atualização da última posição com base nos dados de odometria recebidos
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        theta = euler_to_quaternion(msg.pose.pose.orientation)
 
         self.latest_odom = [x, y, theta]
 
@@ -142,27 +114,27 @@ class FastSlam_ROS(Node):
         #Calcular o range e bearing de cada feature
         measurements = []
         for f in features:
-            measurements.append([
-                f["aruco_id"],
-                f["range"],
-                f["bearing"]
-            ])
+            lx = f["landmark_x"]
+            lz = f["landmark_y"]
+            r = math.hypot(lx, lz)
+            b = math.atan2(-lx, lz) 
+            print(f"Feature {f['aruco_id']}: range={r:.2f}, bearing={b:.2f}")
+            
+            measurements.append([f["aruco_id"], r, b])
+
 
         #Enviamos os dados para o slam, que retorna as coordenadas das particulas e as melhores estimativas da posição do robo e do mapa
         particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
 
-        # Encontrar melhor partícula (maior peso)
-        best_index = max(range(len(self.slam.particles)), key=lambda i: self.slam.particles[i].weight)
-        best_particle_position = particles[best_index]
-
-        # Guardar a trajetória da melhor partícula
-        self.best_particle_path.append([float(best_particle_position[0]), float(best_particle_position[1]), 0.15])
+        #Guardar a melhor trajetória para publicar depois
+        best_particle = max(self.slam.particles, key=lambda p: p.weight)
+        self.best_weight_path.append([float(best_particle.state[0]), float(best_particle.state[1]), 0.15])
 
         # Publicar resultados convertidos
         self.publish_particles(particles, msg.header)
         self.publish_map(est_map, msg.header)
         self.publish_pose(est_pose, msg.header)
-        self.publish_best_particle_path(msg.header)
+        self.publish_best_weight_path(msg.header)
 
         debug_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
         debug_msg.header = msg.header 
@@ -224,12 +196,10 @@ class FastSlam_ROS(Node):
         msg.pose.orientation = quaternion_to_euler(est_pose[2])
         self.pose_pub.publish(msg)
 
-    #Publicar trajetória da melhor partícula
-    def publish_best_particle_path(self, header):
-
-        if self.best_particle_path:
-            cloud_msg = self.create_point_cloud(self.best_particle_path, header, 0, 0, 255)
-            self.best_particle_pub.publish(cloud_msg)
+    def publish_best_weight_path(self, header):
+        if self.best_weight_path:
+            cloud_msg = self.create_point_cloud(self.best_weight_path, header, 0, 0, 255)
+            self.best_weight_path_pub.publish(cloud_msg)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -243,6 +213,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
-
-

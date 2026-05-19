@@ -68,11 +68,10 @@ class FastSLAM1(ParticleFilter):
         )
         
         self.prev_odom = np.array(initial_pose, dtype=float)
-        self.initial_theta = initial_pose[2]
         
         # Parâmetros
-        self.alphas = [0.01, 0.005, 0.02, 0.005]
-        self.R_noise = np.array([[0.08, 0.0], [0.0, 0.02]]) 
+        self.alphas = [0.003, 0.001, 0.008, 0.001]
+        self.R_noise = np.array([[0.02, 0.0], [0.0, 0.008]]) 
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
@@ -96,44 +95,13 @@ class FastSLAM1(ParticleFilter):
 
         # Sideways movement should be small for differential-drive robot.
         # We ignore local_dy to avoid fake rotations caused by odometry noise.
-        #rot1 = 0.0
-        #rot2 = (current_odom[2] - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
-        #rot_total = rot2
-
-        clean_odom = np.array(current_odom, dtype=float)
-
-        dtheta = (clean_odom[2] - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
-        #dtheta *= 0.92
-
-        max_dtheta = math.radians(45)
-
-        if abs(dtheta) > max_dtheta:
-            clean_odom[2] = self.prev_odom[2]
-            dtheta = 0.0
-
-        dx = clean_odom[0] - self.prev_odom[0]
-        dy = clean_odom[1] - self.prev_odom[1]
-
-        trans = math.hypot(dx, dy)
-
-        move_angle = math.atan2(dy, dx)
-
-        rot1 = move_angle - self.prev_odom[2]
-        rot1 = (rot1 + math.pi) % (2 * math.pi) - math.pi
-
-        dtheta = clean_odom[2] - self.prev_odom[2]
-        dtheta = (dtheta + math.pi) % (2 * math.pi) - math.pi
-
-        rot2 = dtheta - rot1
-        rot2 = (rot2 + math.pi) % (2 * math.pi) - math.pi
-
-        rot_total = dtheta
-
-        #print("odom theta:", math.degrees(current_odom[2]), "prev theta:", math.degrees(self.prev_odom[2]), "dtheta:", math.degrees(dtheta), "trans:", trans)
+        rot1 = 0.0
+        rot2 = (current_odom[2] - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
+        rot_total = rot2
 
         # --- A BARREIRA ESPACIAL ---
         # Se não andou o suficiente nem rodou o suficiente, devolve as poses antigas e NÃO faz nada!
-        if abs(trans) < self.min_trans_update and abs(rot_total) < self.min_rot_update:
+        if trans < self.min_trans_update and abs(rot_total) < self.min_rot_update:
             
             # Exceção: Se for o primeiríssimo frame, queremos mapear o que está à volta antes de arrancar
             if not self.is_initialized and len(measurements) > 0:
@@ -147,8 +115,7 @@ class FastSLAM1(ParticleFilter):
             return particles_poses, est_pose, est_map
 
         # Atualiza o marco de referência da odometria APENAS quando o ciclo vai correr
-        #self.prev_odom = np.array(current_odom, dtype=float)
-        self.prev_odom = clean_odom
+        self.prev_odom = np.array(current_odom, dtype=float)
 
         # 1. FASE PREDICT: Salto Cego
         self._predict(rot1, trans, rot2)
@@ -188,9 +155,8 @@ class FastSLAM1(ParticleFilter):
             noisy_rot2 = rot2 + self.rng.normal(0, sd_rot2)
 
             # Mover a partícula
-            theta_mid = p.state[2] + noisy_rot1 + noisy_rot2 * 0.5
-            p.state[0] += noisy_trans * math.cos(theta_mid)
-            p.state[1] += noisy_trans * math.sin(theta_mid)
+            p.state[0] += noisy_trans * math.cos(p.state[2] + noisy_rot1)
+            p.state[1] += noisy_trans * math.sin(p.state[2] + noisy_rot1)
             p.state[2] += noisy_rot1 + noisy_rot2
             p.state[2] = (p.state[2] + math.pi) % (2 * math.pi) - math.pi
 
