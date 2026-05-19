@@ -185,6 +185,45 @@ class FastSlam_ROS(Node):
             
         msg.data = bytes(buffer)
         return msg
+    
+    #Função para obter os parâmetros de alinhar
+    def get_alignment_params(self):
+
+        angle_deg = -33
+        angle_rad = math.radians(angle_deg)
+
+        tx = -0.20
+        ty = 0.30
+
+        scale = 0.97
+
+        if self.best_weight_path:
+            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
+            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
+        else:
+            cx = 0.0
+            cy = 0.0
+
+        return cx, cy, angle_rad, tx, ty, scale
+
+
+    #Alinhamento dos pontos para o foxglove 
+    def align_point(self, x, y):
+
+        cx, cy, angle_rad, tx, ty, scale = self.get_alignment_params()
+
+        dx = x - cx
+        dy = y - cy
+
+        # Scale relative to center
+        dx *= scale
+        dy *= scale
+
+        # Rotate + translate
+        x_aligned = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad) + tx
+        y_aligned = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad) + ty
+
+        return x_aligned, y_aligned
 
     #Publicar a nuvem de particulas
     def publish_particles(self, particles, header):
@@ -192,76 +231,28 @@ class FastSlam_ROS(Node):
         if not particles:
             return
 
-        angle_deg = -35
-        angle_rad = math.radians(angle_deg)
-
-        # Same center used for path + landmarks
-        if self.best_weight_path:
-            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
-            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
-        else:
-            cx = 0.0
-            cy = 0.0
-
         points = []
 
         for p in particles:
+            x, y = self.align_point(float(p[0]), float(p[1]))
+            points.append([x, y, 0.05])
 
-            x = float(p[0])
-            y = float(p[1])
-
-            dx = x - cx
-            dy = y - cy
-
-            x_rot = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
-            y_rot = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
-
-            points.append([
-                x_rot,
-                y_rot,
-                0.05
-            ])
-
-        cloud_msg = self.create_point_cloud(
-            points,
-            header,
-            255,
-            0,
-            0
-        )
-
+        cloud_msg = self.create_point_cloud(points,header,255,0,0)
         self.particles_pub.publish(cloud_msg)
 
+    #Publicar as landmarks do mapa
     def publish_map(self, est_map, header):
+
         if not est_map:
             return
 
-        angle_deg = -35
-        angle_rad = math.radians(angle_deg)
-
-        # Use same center as rotated trajectory
-        if self.best_weight_path:
-            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
-            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
-        else:
-            cx = 0.0
-            cy = 0.0
-
         points = []
 
-        for m_id, coords in est_map.items():
-            x = float(coords[0])
-            y = float(coords[1])
+        for _, coords in est_map.items():
+            x, y = self.align_point(float(coords[0]),float(coords[1]))
+            points.append([x,y,0.1])
 
-            dx = x - cx
-            dy = y - cy
-
-            x_rot = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
-            y_rot = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
-
-            points.append([x_rot, y_rot, 0.1])
-
-        cloud_msg = self.create_point_cloud(points, header, 0, 255, 0)
+        cloud_msg = self.create_point_cloud(points,header,0,255,0)
         self.map_pub.publish(cloud_msg)
 
     #Publicar a posição estimada
@@ -280,36 +271,13 @@ class FastSlam_ROS(Node):
         if not self.best_weight_path:
             return
 
-        angle_deg = -35
-        angle_rad = math.radians(angle_deg)
-
-        cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
-        cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
-
-        rotated_path = []
+        aligned_path = []
 
         for p in self.best_weight_path:
+            x, y = self.align_point(float(p[0]),float(p[1]))
+            aligned_path.append([x,y,float(p[2])])
 
-            dx = p[0] - cx
-            dy = p[1] - cy
-
-            x_rot = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
-            y_rot = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
-
-            rotated_path.append([
-                float(x_rot),
-                float(y_rot),
-                float(p[2])
-            ])
-
-        cloud_msg = self.create_point_cloud(
-            rotated_path,
-            header,
-            0,
-            0,
-            255
-        )
-
+        cloud_msg = self.create_point_cloud(aligned_path,header,0,0,255)
         self.best_weight_path_pub.publish(cloud_msg)
 
     #Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
@@ -319,41 +287,22 @@ class FastSlam_ROS(Node):
 
         self.amcl_path_points.append([float(x), float(y)])
 
-    def rotate_point_about_center(self, x, y, cx, cy, angle_rad):
-        dx = x - cx
-        dy = y - cy
-
-        xr = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
-        yr = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
-
-        return xr, yr
-
-
+    #Publicar a trajetória do amcl
     def compute_and_publish_error(self):
+
         if len(self.best_weight_path) < 2 or len(self.amcl_path_points) < 2:
             return
-
-        angle_deg = -35
-        angle_rad = math.radians(angle_deg)
-
-        cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
-        cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
 
         n = min(len(self.best_weight_path), len(self.amcl_path_points))
 
         errors = []
 
         for i in range(n):
+
             sx, sy, _ = self.best_weight_path[i]
             gx, gy = self.amcl_path_points[i]
 
-            sx_rot, sy_rot = self.rotate_point_about_center(
-                sx,
-                sy,
-                cx,
-                cy,
-                angle_rad
-            )
+            sx_rot, sy_rot = self.align_point(sx, sy)
 
             error = math.sqrt((sx_rot - gx) ** 2 + (sy_rot - gy) ** 2)
             errors.append(error)
@@ -362,6 +311,7 @@ class FastSlam_ROS(Node):
 
         msg = Float32()
         msg.data = float(rmse)
+
         self.error_pub.publish(msg)
 
 def main(args=None):
