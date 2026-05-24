@@ -70,8 +70,8 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.01, 0.005, 0.02, 0.005]
-        self.R_noise = np.array([[0.008, 0.0], [0.0, 0.0015]]) 
+        self.alphas = [0.003, 0.001, 0.008, 0.001]
+        self.R_noise = np.array([[0.02, 0.0], [0.0, 0.008]]) 
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
@@ -96,12 +96,14 @@ class FastSLAM1(ParticleFilter):
         # Sideways movement should be small for differential-drive robot.
         # We ignore local_dy to avoid fake rotations caused by odometry noise.
         rot1 = 0.0
-        rot2 = (current_odom[2] - self.prev_odom[2] + math.pi) % (2 * math.pi) - math.pi
+        yaw_gain = 0.90
+        rot2 = math.atan2(math.sin(current_odom[2] - self.prev_odom[2]), math.cos(current_odom[2] - self.prev_odom[2]))
+        rot2 *= yaw_gain        
         rot_total = rot2
 
         # --- A BARREIRA ESPACIAL ---
         # Se não andou o suficiente nem rodou o suficiente, devolve as poses antigas e NÃO faz nada!
-        if trans < self.min_trans_update and abs(rot_total) < self.min_rot_update:
+        if abs(trans) < self.min_trans_update and abs(rot_total) < self.min_rot_update:
             
             # Exceção: Se for o primeiríssimo frame, queremos mapear o que está à volta antes de arrancar
             if not self.is_initialized and len(measurements) > 0:

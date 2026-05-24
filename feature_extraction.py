@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 import math
 
+CAMERA_YAW_OFFSET = math.radians(-9)  # approximate from your error
+
 
 class ArucoFeatureExtractor:
     def __init__(self, dictionary_name=cv2.aruco.DICT_4X4_50):
@@ -18,12 +20,18 @@ class ArucoFeatureExtractor:
         self.marker_size = 0.16872
 
         self.camera_matrix = np.array([
-            [261.00813352, 0.0, 172.1808022],
-            [0.0, 262.1472986, 120.76379966],
+            [264.09454964, 0.0, 108.69324022],
+            [0.0, 256.40073929, 111.97514945],
             [0.0, 0.0, 1.0]
         ], dtype=np.float32)
 
-        self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+        self.dist_coeffs = np.array([
+            0.33742637,
+            -0.28162654,
+            -0.01355962,
+            -0.04983937,
+            0.20974118
+        ], dtype=np.float32)
 
         # Stores all positions for each ArUco ID
         self.aruco_positions = {}
@@ -69,7 +77,7 @@ class ArucoFeatureExtractor:
             y = float(tvec[0][1])
             z = float(tvec[0][2])
 
-            range_m = math.sqrt(x**2 + y**2 + z**2)
+            range_m = math.sqrt(x**2 + z**2)
             bearing_rad = math.atan2(x, z)
 
             if robot_pose is not None:
@@ -107,6 +115,26 @@ class ArucoFeatureExtractor:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (0, 255, 0),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"r={range_m:.2f}m b={math.degrees(bearing_rad):.1f}deg",
+                (center_int[0], center_int[1] + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 0, 0),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"x={landmark_x:.2f} y={landmark_y:.2f}",
+                (center_int[0], center_int[1] + 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 255),
                 2
             )
 

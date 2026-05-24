@@ -4,8 +4,10 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, Image, PointCloud2, PointField
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
+from geometry_msgs.msg import PoseStamped, Quaternion, PoseWithCovarianceStamped
 from geometry_msgs.msg import PoseStamped, Quaternion
+from std_msgs.msg import Float32
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -51,6 +53,11 @@ class FastSlam_ROS(Node):
         self.slam = None
         self.last_time = None
 
+        self.best_weight_path = []
+
+        self.amcl_path = Path()
+        self.amcl_path.header.frame_id = "map"
+        self.amcl_path_points = []
 
         #Subscrições:
 
@@ -58,6 +65,11 @@ class FastSlam_ROS(Node):
         self.image_sub = self.create_subscription(CompressedImage, '/image_raw/compressed', self.imagem, 10)
         #Subscrever o tópico da odometria
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odometria, 10)
+        #Subscrever o tópico da posição estimada pelo amcl
+        self.amcl_sub = self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.amcl_callback, 10)
+        #Subscrever o tópico da posição estimada pelo amcl para calcular o erro de alinhamento entre o fastslam e o amcl
+        self.error_pub = self.create_publisher(Float32, '/fastslam/alignment_error', 10)
+
 
 
         #Publicaçẽs:
@@ -70,7 +82,10 @@ class FastSlam_ROS(Node):
         self.map_pub = self.create_publisher(PointCloud2, '/fastslam/map_markers', 10)
         #Publicar o tópico com a posição do robo
         self.pose_pub = self.create_publisher(PoseStamped, '/fastslam/robot_pose', 10)
-
+        #Publicar o tópico com a melhor trajetória
+        self.best_weight_path_pub = self.create_publisher(PointCloud2, '/fastslam/best_weight_path', 10)
+        #Publicar o tópico com a trajetória do amcl
+        self.amcl_path_pub = self.create_publisher(Path, '/amcl/path', 10)
 
         #O logger é semelhante a um print, mas para além disso cria um tópico ros com os loggs
         self.get_logger().info("FastSLAM ROS Node iniciado!")
@@ -116,6 +131,7 @@ class FastSlam_ROS(Node):
             lz = f["landmark_y"]
             r = math.hypot(lx, lz)
             b = math.atan2(-lx, lz) 
+            print(f"Feature {f['aruco_id']}: range={r:.2f}, bearing={b:.2f}")
             
             measurements.append([f["aruco_id"], r, b])
 
@@ -123,11 +139,16 @@ class FastSlam_ROS(Node):
         #Enviamos os dados para o slam, que retorna as coordenadas das particulas e as melhores estimativas da posição do robo e do mapa
         particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
 
+        #Guardar a melhor trajetória para publicar depois
+        best_particle = max(self.slam.particles, key=lambda p: p.weight)
+        self.best_weight_path.append([float(best_particle.state[0]), float(best_particle.state[1]), 0.15])
 
         # Publicar resultados convertidos
         self.publish_particles(particles, msg.header)
         self.publish_map(est_map, msg.header)
         self.publish_pose(est_pose, msg.header)
+        self.publish_best_weight_path(msg.header)
+        self.compute_and_publish_error()
 
         debug_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
         debug_msg.header = msg.header 
@@ -164,20 +185,75 @@ class FastSlam_ROS(Node):
             
         msg.data = bytes(buffer)
         return msg
+    
+    #Função para obter os parâmetros de alinhar
+    def get_alignment_params(self):
+
+        angle_deg = -33
+        angle_rad = math.radians(angle_deg)
+
+        tx = -0.20
+        ty = 0.30
+
+        scale = 0.97
+
+        if self.best_weight_path:
+            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
+            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
+        else:
+            cx = 0.0
+            cy = 0.0
+
+        return cx, cy, angle_rad, tx, ty, scale
+
+
+    #Alinhamento dos pontos para o foxglove 
+    def align_point(self, x, y):
+
+        cx, cy, angle_rad, tx, ty, scale = self.get_alignment_params()
+
+        dx = x - cx
+        dy = y - cy
+
+        # Scale relative to center
+        dx *= scale
+        dy *= scale
+
+        # Rotate + translate
+        x_aligned = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad) + tx
+        y_aligned = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad) + ty
+
+        return x_aligned, y_aligned
 
     #Publicar a nuvem de particulas
     def publish_particles(self, particles, header):
-        points = [[float(p[0]), float(p[1]), 0.05] for p in particles] # o z = 0.05 para as particulas não coincidirem com a grelha do foxglove
-        if points:
-            cloud_msg = self.create_point_cloud(points, header, 255, 0, 0)
-            self.particles_pub.publish(cloud_msg)
 
-    #Publicar as landmarks
+        if not particles:
+            return
+
+        points = []
+
+        for p in particles:
+            x, y = self.align_point(float(p[0]), float(p[1]))
+            points.append([x, y, 0.05])
+
+        cloud_msg = self.create_point_cloud(points,header,255,0,0)
+        self.particles_pub.publish(cloud_msg)
+
+    #Publicar as landmarks do mapa
     def publish_map(self, est_map, header):
-        points = [[float(coords[0]), float(coords[1]), 0.1] for m_id, coords in est_map.items()]
-        if points:
-            cloud_msg = self.create_point_cloud(points, header, 0, 255, 0)
-            self.map_pub.publish(cloud_msg)
+
+        if not est_map:
+            return
+
+        points = []
+
+        for _, coords in est_map.items():
+            x, y = self.align_point(float(coords[0]),float(coords[1]))
+            points.append([x,y,0.1])
+
+        cloud_msg = self.create_point_cloud(points,header,0,255,0)
+        self.map_pub.publish(cloud_msg)
 
     #Publicar a posição estimada
     def publish_pose(self, est_pose, header):
@@ -188,6 +264,55 @@ class FastSlam_ROS(Node):
         msg.pose.position.y = float(est_pose[1])
         msg.pose.orientation = quaternion_to_euler(est_pose[2])
         self.pose_pub.publish(msg)
+
+    #Publicar a melhor trajetória
+    def publish_best_weight_path(self, header):
+
+        if not self.best_weight_path:
+            return
+
+        aligned_path = []
+
+        for p in self.best_weight_path:
+            x, y = self.align_point(float(p[0]),float(p[1]))
+            aligned_path.append([x,y,float(p[2])])
+
+        cloud_msg = self.create_point_cloud(aligned_path,header,0,0,255)
+        self.best_weight_path_pub.publish(cloud_msg)
+
+    #Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
+    def amcl_callback(self, msg):
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+
+        self.amcl_path_points.append([float(x), float(y)])
+
+    #Publicar a trajetória do amcl
+    def compute_and_publish_error(self):
+
+        if len(self.best_weight_path) < 2 or len(self.amcl_path_points) < 2:
+            return
+
+        n = min(len(self.best_weight_path), len(self.amcl_path_points))
+
+        errors = []
+
+        for i in range(n):
+
+            sx, sy, _ = self.best_weight_path[i]
+            gx, gy = self.amcl_path_points[i]
+
+            sx_rot, sy_rot = self.align_point(sx, sy)
+
+            error = math.sqrt((sx_rot - gx) ** 2 + (sy_rot - gy) ** 2)
+            errors.append(error)
+
+        rmse = math.sqrt(sum(e ** 2 for e in errors) / len(errors))
+
+        msg = Float32()
+        msg.data = float(rmse)
+
+        self.error_pub.publish(msg)
 
 def main(args=None):
     rclpy.init(args=args)
