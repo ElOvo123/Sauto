@@ -78,7 +78,9 @@ class ArucoFeatureExtractor:
             z = float(tvec[0][2])
 
             range_m = math.sqrt(x**2 + z**2)
-            bearing_rad = math.atan2(x, z)
+            
+            # robotics convention
+            bearing_rad = math.atan2(x, z) + CAMERA_YAW_OFFSET
 
             if robot_pose is not None:
                 rx, ry, rtheta = robot_pose
