@@ -18,9 +18,17 @@ class ArucoFeatureExtractor:
         self.marker_size = 0.151 
 
         self.camera_matrix = np.array([
-            [261.00813352, 0.0, 172.1808022],
-            [0.0, 262.1472986, 120.76379966],
+            [264.09454964, 0.0, 108.69324022],
+            [0.0, 256.40073929, 111.97514945],
             [0.0, 0.0, 1.0]
+        ], dtype=np.float32)
+
+        self.dist_coeffs = np.array([
+            0.33742637,
+            -0.28162654,
+            -0.01355962,
+            -0.04983937,
+            0.20974118
         ], dtype=np.float32)
 
         self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
