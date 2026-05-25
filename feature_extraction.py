@@ -72,14 +72,23 @@ class ArucoFeatureExtractor:
             range_m = math.sqrt(x**2 + z**2)
             bearing_rad = math.atan2(x, z)
 
+            # Calibration from first ArUco
+            bearing_bias = math.radians(3.3)
+            range_scale = 0.976
+
+            bearing_rad += bearing_bias
+            bearing_rad = math.atan2(math.sin(bearing_rad), math.cos(bearing_rad))
+
+            range_m *= range_scale
+
             if robot_pose is not None:
                 rx, ry, rtheta = robot_pose
 
                 landmark_x = rx + range_m * math.cos(rtheta + bearing_rad)
                 landmark_y = ry + range_m * math.sin(rtheta + bearing_rad)
             else:
-                landmark_x = x
-                landmark_y = z
+                landmark_x = range_m * math.cos(bearing_rad)
+                landmark_y = range_m * math.sin(bearing_rad)
 
             # Store positions
             if aruco_id not in self.aruco_positions:
@@ -94,6 +103,8 @@ class ArucoFeatureExtractor:
                 "aruco_id": aruco_id,
                 "landmark_x": float(landmark_x),
                 "landmark_y": float(landmark_y),
+                "range": float(range_m),
+                "bearing": float(bearing_rad),
             })
 
             center_int = tuple(center.astype(int))
