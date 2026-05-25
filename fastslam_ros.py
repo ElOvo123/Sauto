@@ -57,7 +57,7 @@ class FastSlam_ROS(Node):
         self.best_weight_path = []
 
         # Store full trajectory of every particle
-        self.particle_paths = {}
+        self.best_weight_landmarks = {}
 
         # AMCL path + error
         self.amcl_path = Path()
@@ -71,6 +71,7 @@ class FastSlam_ROS(Node):
         self.start_landmark_lost = False
         self.start_pose = None
         self.start_landmark_forward_distance = 0.0
+        self.odom_only_path = []
 
         # Minimum trajectory size before allowing lap closure
         self.min_lap_points = 30
@@ -85,7 +86,8 @@ class FastSlam_ROS(Node):
         self.amcl_sub = self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.amcl_callback, 10)
         #Subscrever o tópico da posição estimada pelo amcl para calcular o erro de alinhamento entre o fastslam e o amcl
         self.error_pub = self.create_publisher(Float32, '/fastslam/alignment_error', 10)
-
+        #Subscrever o tópico da odometria para publicar a trajetória do odom apenas
+        self.odom_only_path_pub = self.create_publisher(PointCloud2,'/fastslam/odom_only_path',10)
 
 
         #Publicaçẽs:
@@ -101,7 +103,7 @@ class FastSlam_ROS(Node):
         #Publicar o tópico com a melhor trajetória
         self.best_weight_path_pub = self.create_publisher(PointCloud2, '/fastslam/best_weight_path', 10)
         #Publicar o tópico com a trajetória do amcl
-        self.amcl_path_pub = self.create_publisher(Path, '/amcl/path', 10)
+        self.amcl_path_pub = self.create_publisher(PointCloud2,'/amcl/path',10)
 
         #O logger é semelhante a um print, mas para além disso cria um tópico ros com os loggs
         self.get_logger().info("FastSLAM ROS Node iniciado!")
@@ -115,10 +117,11 @@ class FastSlam_ROS(Node):
         theta = euler_to_quaternion(msg.pose.pose.orientation)
 
         self.latest_odom = [x, y, theta]
+        self.odom_only_path.append([float(x), float(y), 0.12])
 
         #O fastslam só é iniciado após receber a primeira mensagem de odometria (o slam precisa de uma posição inicial)
         if self.slam is None:
-            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=100)
+            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=300)
             self.last_time = time.time()
             self.get_logger().info("FastSLAM inicializado com a odometria inicial!")
 
@@ -139,38 +142,21 @@ class FastSlam_ROS(Node):
         measurements = []
         for f in features:
             lx = f["landmark_x"]
-            lz = f["landmark_y"]
+            ly = f["landmark_y"]
 
-            r = math.hypot(lx, lz)
-            b = math.atan2(-lx, lz)
+            r = math.hypot(lx, ly)
+            b = math.atan2(lx, ly)
 
             measurements.append([f["aruco_id"], r, b])
-
+        
         odom_progress_from_start = 0.0
         if self.start_pose is not None:
             dx = self.latest_odom[0] - self.start_pose[0]
             dy = self.latest_odom[1] - self.start_pose[1]
             start_theta = self.start_pose[2]
-            odom_progress_from_start = (
-                dx * math.cos(start_theta) + dy * math.sin(start_theta)
-            )
+            odom_progress_from_start = (dx * math.cos(start_theta) + dy * math.sin(start_theta))
 
-        particles, est_pose, est_map = self.slam.step(
-            self.latest_odom,
-            measurements,
-            dt
-        )
-
-        # Store full path of every particle
-        for i, p in enumerate(self.slam.particles):
-            if i not in self.particle_paths:
-                self.particle_paths[i] = []
-
-            self.particle_paths[i].append([
-                float(p.state[0]),
-                float(p.state[1]),
-                0.15
-            ])
+        particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
 
         visible_ids = [m[0] for m in measurements]
 
@@ -181,57 +167,52 @@ class FastSlam_ROS(Node):
             self.start_landmark_lost = False
             self.start_pose = list(self.latest_odom)
 
-            start_measurement = next(
-                (m for m in measurements if m[0] == self.start_landmark_id),
-                None
-            )
+            start_measurement = next((m for m in measurements if m[0] == self.start_landmark_id),None)
+
             if start_measurement is not None:
-                self.start_landmark_forward_distance = max(
-                    0.0,
-                    start_measurement[1] * math.cos(start_measurement[2])
-                )
+                self.start_landmark_forward_distance = max(0.0, start_measurement[1] * math.cos(start_measurement[2]))
             else:
                 self.start_landmark_forward_distance = 0.0
 
-            self.get_logger().info(
-                f"Lap started with landmark {self.start_landmark_id}"
-            )
+            self.get_logger().info(f"Lap started with landmark {self.start_landmark_id}")
 
         elif self.lap_started and not self.lap_finished:
 
-            path_len = len(next(iter(self.particle_paths.values())))
+            best_live_particle = max(self.slam.particles, key=lambda p: p.weight)
+            path_len = len(best_live_particle.path)
 
             # First wait until we lose the starting landmark
-            if (
-                self.start_landmark_id not in visible_ids
-                and path_len > self.min_lap_points
-                and odom_progress_from_start >= self.start_landmark_forward_distance
-            ):
+            if (self.start_landmark_id not in visible_ids and path_len > self.min_lap_points 
+                and odom_progress_from_start > self.start_landmark_forward_distance):
                 self.start_landmark_lost = True
 
             # Then finish lap when we see it again
-            if (
-                self.start_landmark_lost
-                and self.start_landmark_id in visible_ids
-            ):
+            if (self.start_landmark_lost and self.start_landmark_id in visible_ids):
                 self.lap_finished = True
 
-                best_index = max(
-                    range(len(self.slam.particles)),
-                    key=lambda i: self.slam.particles[i].weight
-                )
-
-                # Full path of ONE particle: final best particle
-                self.best_weight_path = self.particle_paths[best_index]
+                if self.slam.best_particle_ever is not None:
+                    best_particle = self.slam.best_particle_ever
+                else:
+                    best_particle = max(self.slam.particles, key=lambda p: p.weight)
 
                 self.get_logger().info(
-                    f"Lap finished. Best particle: {best_index}"
+                    f"Lap finished. Selected saved particle weight: {best_particle.weight}"
                 )
 
+                self.best_weight_path = list(best_particle.path)
+
+                self.best_weight_landmarks = {m_id: [float(ekf.state_estimate[0]), float(ekf.state_estimate[1])] for m_id, ekf in best_particle.landmarks.items()}
+
+                self.get_logger().info(f"Lap finished. Best particle weight: {best_particle.weight}")
+
                 self.publish_particles(particles, msg.header)
-                self.publish_map(est_map, msg.header)
+                self.publish_map(self.best_weight_landmarks, msg.header)
                 self.publish_best_weight_path(msg.header)
                 self.compute_and_publish_error()
+                self.publish_odom_only_path(msg.header)
+                self.publish_amcl_path(msg.header)
+
+                return
 
         # Pose keeps publishing live
         self.publish_pose(est_pose, msg.header)
@@ -242,10 +223,10 @@ class FastSlam_ROS(Node):
         self.image_pub.publish(debug_msg)
 
     #Cria o formato de point cloud para publicar topicos como a nuvem de particulas e as landmarks
-    def create_point_cloud(self, points, header, r, g, b):
+    def create_point_cloud(self, points, header, r, g, b, frame_id="odom"):
         """Converte uma lista de [x, y, z] numa mensagem PointCloud2 com cor RGBA"""
         msg = PointCloud2()
-        msg.header.frame_id = "odom"
+        msg.header.frame_id = frame_id
         msg.header.stamp = header.stamp
         msg.height = 1
         msg.width = len(points)
@@ -275,13 +256,13 @@ class FastSlam_ROS(Node):
     #Função para obter os parâmetros de alinhar
     def get_alignment_params(self):
 
-        angle_deg = -35.3
+        angle_deg = 0
         angle_rad = math.radians(angle_deg)
 
-        tx = 1.5
-        ty = -1.4
+        tx = 0
+        ty = 0
 
-        scale = 0.975
+        scale = 1.0
 
         if self.best_weight_path:
             cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
@@ -325,6 +306,20 @@ class FastSlam_ROS(Node):
 
         cloud_msg = self.create_point_cloud(points,header,255,0,0)
         self.particles_pub.publish(cloud_msg)
+
+    #Publicar a trajetória do odom apenas
+    def publish_odom_only_path(self, header):
+        if not self.odom_only_path:
+            return
+
+        points = []
+
+        for p in self.odom_only_path:
+            x, y = self.align_point(float(p[0]), float(p[1]))
+            points.append([x, y, float(p[2])])
+
+        cloud_msg = self.create_point_cloud(points, header, 255, 165, 0)
+        self.odom_only_path_pub.publish(cloud_msg)
 
     #Publicar as landmarks do mapa
     def publish_map(self, est_map, header):
@@ -372,6 +367,31 @@ class FastSlam_ROS(Node):
         y = msg.pose.pose.position.y
 
         self.amcl_path_points.append([float(x), float(y)])
+
+    #Publicar a trajetória do amcl, alinhada com a trajetória do fastslam para comparação no foxglove
+    def publish_amcl_path(self, header):
+
+        if not self.amcl_path_points:
+            return
+
+        points = []
+
+        for p in self.amcl_path_points:
+            x, y = self.align_point(float(p[0]), float(p[1]))
+            points.append([x, y, 0.14])
+
+        cloud_msg = self.create_point_cloud(
+            points,
+            header,
+            255,   # R
+            0,     # G
+            255,    # B
+            frame_id="map"
+        )
+
+        print (points)
+
+        self.amcl_path_pub.publish(cloud_msg)
 
     #Publicar a trajetória do amcl
     def compute_and_publish_error(self):

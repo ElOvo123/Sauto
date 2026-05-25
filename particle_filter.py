@@ -12,6 +12,12 @@ class Particle:
     def copy(self):
         new_p = Particle(self.state.copy(), self.weight)
         new_p.landmarks = copy.deepcopy(self.landmarks)
+
+        if hasattr(self, "path"):
+            new_p.path = copy.deepcopy(self.path)
+        else:
+            new_p.path = []
+
         return new_p
 
 

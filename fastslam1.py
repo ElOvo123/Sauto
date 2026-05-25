@@ -70,14 +70,29 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.003, 0.001, 0.008, 0.001]
-        self.R_noise = np.array([[0.02, 0.0], [0.0, 0.008]]) 
+        self.alphas = [0.01, 0.0002, 0.0002, 0.0002]
+        self.R_noise = np.array([[0.05, 0.0], [0.0, 0.05]]) 
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
-        self.min_trans_update = 0.05  # Tem de andar 5cm
-        self.min_rot_update = 0.05    # Ou rodar ~3 graus   
+        self.min_trans_update = 0.005 # Tem de andar 5cm
+        self.min_rot_update = 0.005    # Ou rodar ~3 graus   
         self.is_initialized = False
+
+        self.best_particle_ever = None
+        self.best_weight_ever = -1.0
+
+        self.best_particle_before_resample = None
+
+        for p in self.particles:
+            p.path = [[float(initial_pose[0]), float(initial_pose[1]), 0.15]]
+            
+    def _store_particle_paths(self):
+        for p in self.particles:
+            if not hasattr(p, "path"):
+                p.path = []
+
+            p.path.append([float(p.state[0]), float(p.state[1]), 0.15])
 
     def step(self, current_odom, measurements, dt):
         # Calcular a diferença desde a ÚLTIMA VEZ que o SLAM executou um ciclo
@@ -96,7 +111,8 @@ class FastSLAM1(ParticleFilter):
         # Sideways movement should be small for differential-drive robot.
         # We ignore local_dy to avoid fake rotations caused by odometry noise.
         rot1 = 0.0
-        rot2 = math.atan2(math.sin(current_odom[2] - self.prev_odom[2]), math.cos(current_odom[2] - self.prev_odom[2]))
+        rot2 = current_odom[2] - self.prev_odom[2]
+        rot2 = math.atan2(math.sin(rot2), math.cos(rot2))
         rot_total = rot2
 
         # --- A BARREIRA ESPACIAL ---
@@ -107,6 +123,8 @@ class FastSLAM1(ParticleFilter):
             if not self.is_initialized and len(measurements) > 0:
                 self._update_maps(measurements)
                 self.is_initialized = True
+
+            self._store_particle_paths()
 
             best_p = max(self.particles, key=lambda p: p.weight)
             est_pose = best_p.state.tolist()
@@ -125,16 +143,43 @@ class FastSLAM1(ParticleFilter):
             self._update_maps(measurements)
             self.is_initialized = True
 
-        #Resample
+        # print(
+        #     "weights:",
+        #     "max=", max(p.weight for p in self.particles),
+        #     "min=", min(p.weight for p in self.particles),
+        #     "neff=", self.effective_sample_size()
+        # )
+
+        # Store current pose in each particle path
+        self._store_particle_paths()
+
+        # Best particle in this step
+        current_best = max(self.particles, key=lambda p: p.weight)
+
+        # Save best before resampling
+        self.best_particle_before_resample = current_best.copy()
+
+        # Save best particle seen during the whole lap
+        if current_best.weight > self.best_weight_ever:
+            self.best_weight_ever = current_best.weight
+            self.best_particle_ever = current_best.copy()
+
         if self.effective_sample_size() < self.resample_threshold:
             self.systematic_resample()
 
-        # Extrair a melhor estimativa
+        # Live estimate after possible resample
         best_p = max(self.particles, key=lambda p: p.weight)
         est_pose = best_p.state.tolist()
 
-        est_map = {m_id: [ekf.state_estimate[0], ekf.state_estimate[1]] for m_id, ekf in best_p.landmarks.items()}
-        particles_poses = [[p.state[0], p.state[1], p.state[2], p.weight] for p in self.particles]
+        est_map = {
+            m_id: [ekf.state_estimate[0], ekf.state_estimate[1]]
+            for m_id, ekf in best_p.landmarks.items()
+        }
+
+        particles_poses = [
+            [p.state[0], p.state[1], p.state[2], p.weight]
+            for p in self.particles
+        ]
 
         return particles_poses, est_pose, est_map
 
@@ -179,7 +224,7 @@ class FastSLAM1(ParticleFilter):
 
                     p.landmarks[m_id] = ExtendedKalmanFilter(
                         initial_state=np.array([lx, ly]),
-                        initial_covariance=np.eye(2) * 1.0,
+                        initial_covariance=np.eye(2) * 0.5,
                         process_noise_covariance=np.zeros((2, 2)),
                         measurement_noise_covariance=self.R_noise,
                         motion_model=landmark_motion_model,
@@ -208,7 +253,8 @@ class FastSLAM1(ParticleFilter):
                         det_Q = np.linalg.det(Q)
                         inv_Q = np.linalg.inv(Q)
                         likelihood = np.exp(-0.5 * v.T @ inv_Q @ v) / np.sqrt((2 * np.pi)**2 * det_Q)
-                        p.weight *= float(likelihood)
+                        likelihood = max(float(likelihood), 1e-5)
+                        p.weight *= likelihood
                     except np.linalg.LinAlgError:
                         p.weight *= 1e-300
 
