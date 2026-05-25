@@ -9,21 +9,39 @@ import cv2
 import numpy as np
 import math
 
+CAMERA_YAW_OFFSET = math.radians(-9)  # approximate from your error
 
 class ArucoFeatureExtractor:
     def __init__(self, dictionary_name=cv2.aruco.DICT_4X4_50):
         self.dictionary = cv2.aruco.Dictionary_get(dictionary_name)
         self.parameters = cv2.aruco.DetectorParameters_create()
 
-        self.marker_size = 0.151 
+        self.marker_size = 0.16872
 
         self.camera_matrix = np.array([
-            [261.00813352, 0.0, 172.1808022],
-            [0.0, 262.1472986, 120.76379966],
+            [264.09454964, 0.0, 108.69324022],
+            [0.0, 256.40073929, 111.97514945],
             [0.0, 0.0, 1.0]
         ], dtype=np.float32)
 
-        self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+
+        self.dist_coeffs = np.array([
+            0.33742637,
+            -0.28162654,
+            -0.01355962,
+            -0.04983937,
+            0.20974118
+        ], dtype=np.float32)
+
+        # self.marker_size = 0.151 
+
+        # self.camera_matrix = np.array([
+        #     [261.00813352, 0.0, 172.1808022],
+        #     [0.0, 262.1472986, 120.76379966],
+        #     [0.0, 0.0, 1.0]
+        # ], dtype=np.float32)
+
+        # self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
         # Stores all positions for each ArUco ID
         self.aruco_positions = {}
@@ -70,16 +88,7 @@ class ArucoFeatureExtractor:
             z = float(tvec[0][2])
 
             range_m = math.sqrt(x**2 + z**2)
-            bearing_rad = math.atan2(x, z)
-
-            # Calibration from first ArUco
-            bearing_bias = math.radians(3.3)
-            range_scale = 0.976
-
-            bearing_rad += bearing_bias
-            bearing_rad = math.atan2(math.sin(bearing_rad), math.cos(bearing_rad))
-
-            range_m *= range_scale
+            bearing_rad = math.atan2(x, z) + CAMERA_YAW_OFFSET
 
             if robot_pose is not None:
                 rx, ry, rtheta = robot_pose
@@ -87,8 +96,8 @@ class ArucoFeatureExtractor:
                 landmark_x = rx + range_m * math.cos(rtheta + bearing_rad)
                 landmark_y = ry + range_m * math.sin(rtheta + bearing_rad)
             else:
-                landmark_x = range_m * math.cos(bearing_rad)
-                landmark_y = range_m * math.sin(bearing_rad)
+                landmark_x = x
+                landmark_y = z
 
             # Store positions
             if aruco_id not in self.aruco_positions:
@@ -103,8 +112,6 @@ class ArucoFeatureExtractor:
                 "aruco_id": aruco_id,
                 "landmark_x": float(landmark_x),
                 "landmark_y": float(landmark_y),
-                "range": float(range_m),
-                "bearing": float(bearing_rad),
             })
 
             center_int = tuple(center.astype(int))

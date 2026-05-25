@@ -69,6 +69,8 @@ class FastSlam_ROS(Node):
         self.lap_finished = False
         self.start_landmark_id = None
         self.start_landmark_lost = False
+        self.start_pose = None
+        self.start_landmark_forward_distance = 0.0
         self.odom_only_path = []
 
         # Minimum trajectory size before allowing lap closure
@@ -101,7 +103,7 @@ class FastSlam_ROS(Node):
         #Publicar o tópico com a melhor trajetória
         self.best_weight_path_pub = self.create_publisher(PointCloud2, '/fastslam/best_weight_path', 10)
         #Publicar o tópico com a trajetória do amcl
-        self.amcl_path_pub = self.create_publisher(Path, '/amcl/path', 10)
+        self.amcl_path_pub = self.create_publisher(PointCloud2,'/amcl/path',10)
 
         #O logger é semelhante a um print, mas para além disso cria um tópico ros com os loggs
         self.get_logger().info("FastSLAM ROS Node iniciado!")
@@ -139,10 +141,20 @@ class FastSlam_ROS(Node):
 
         measurements = []
         for f in features:
-            r = f["range"]
-            b = f["bearing"]
+            lx = f["landmark_x"]
+            ly = f["landmark_y"]
+
+            r = math.hypot(lx, ly)
+            b = math.atan2(lx, ly)
 
             measurements.append([f["aruco_id"], r, b])
+        
+        odom_progress_from_start = 0.0
+        if self.start_pose is not None:
+            dx = self.latest_odom[0] - self.start_pose[0]
+            dy = self.latest_odom[1] - self.start_pose[1]
+            start_theta = self.start_pose[2]
+            odom_progress_from_start = (dx * math.cos(start_theta) + dy * math.sin(start_theta))
 
         particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
 
@@ -153,6 +165,14 @@ class FastSlam_ROS(Node):
             self.start_landmark_id = visible_ids[0]
             self.lap_started = True
             self.start_landmark_lost = False
+            self.start_pose = list(self.latest_odom)
+
+            start_measurement = next((m for m in measurements if m[0] == self.start_landmark_id),None)
+
+            if start_measurement is not None:
+                self.start_landmark_forward_distance = max(0.0, start_measurement[1] * math.cos(start_measurement[2]))
+            else:
+                self.start_landmark_forward_distance = 0.0
 
             self.get_logger().info(f"Lap started with landmark {self.start_landmark_id}")
 
@@ -162,19 +182,12 @@ class FastSlam_ROS(Node):
             path_len = len(best_live_particle.path)
 
             # First wait until we lose the starting landmark
-            if (
-                self.start_landmark_id not in visible_ids
-                and path_len > self.min_lap_points
-            ):
+            if (self.start_landmark_id not in visible_ids and path_len > self.min_lap_points 
+                and odom_progress_from_start > self.start_landmark_forward_distance):
                 self.start_landmark_lost = True
 
             # Then finish lap when we see it again
-            if (
-                self.start_landmark_lost
-                and self.start_landmark_id in visible_ids
-            ):
-                particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
-
+            if (self.start_landmark_lost and self.start_landmark_id in visible_ids):
                 self.lap_finished = True
 
                 if self.slam.best_particle_ever is not None:
@@ -197,6 +210,7 @@ class FastSlam_ROS(Node):
                 self.publish_best_weight_path(msg.header)
                 self.compute_and_publish_error()
                 self.publish_odom_only_path(msg.header)
+                self.publish_amcl_path(msg.header)
 
                 return
 
@@ -242,7 +256,7 @@ class FastSlam_ROS(Node):
     #Função para obter os parâmetros de alinhar
     def get_alignment_params(self):
 
-        angle_deg = -35.3
+        angle_deg = 0
         angle_rad = math.radians(angle_deg)
 
         tx = 0
@@ -353,6 +367,28 @@ class FastSlam_ROS(Node):
         y = msg.pose.pose.position.y
 
         self.amcl_path_points.append([float(x), float(y)])
+
+    #Publicar a trajetória do amcl, alinhada com a trajetória do fastslam para comparação no foxglove
+    def publish_amcl_path(self, header):
+
+        if not self.amcl_path_points:
+            return
+
+        points = []
+
+        for p in self.amcl_path_points:
+            x, y = self.align_point(float(p[0]), float(p[1]))
+            points.append([x, y, 0.14])
+
+        cloud_msg = self.create_point_cloud(
+            points,
+            header,
+            255,   # R
+            0,     # G
+            255    # B
+        )
+
+        self.amcl_path_pub.publish(cloud_msg)
 
     #Publicar a trajetória do amcl
     def compute_and_publish_error(self):
