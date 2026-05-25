@@ -71,7 +71,7 @@ class FastSLAM1(ParticleFilter):
         
         # Parâmetros
         self.alphas = [0.01, 0.0002, 0.0002, 0.0002]
-        self.R_noise = np.array([[0.1, 0.0], [0.0, 0.1]]) 
+        self.R_noise = np.array([[0.05, 0.0], [0.0, 0.05]]) 
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
@@ -224,7 +224,7 @@ class FastSLAM1(ParticleFilter):
 
                     p.landmarks[m_id] = ExtendedKalmanFilter(
                         initial_state=np.array([lx, ly]),
-                        initial_covariance=np.eye(2) * 0.2,
+                        initial_covariance=np.eye(2) * 0.5,
                         process_noise_covariance=np.zeros((2, 2)),
                         measurement_noise_covariance=self.R_noise,
                         motion_model=landmark_motion_model,
