@@ -9,19 +9,21 @@ import cv2
 import numpy as np
 import math
 
+CAMERA_YAW_OFFSET = math.radians(-9)  # approximate from your error
 
 class ArucoFeatureExtractor:
     def __init__(self, dictionary_name=cv2.aruco.DICT_4X4_50):
         self.dictionary = cv2.aruco.Dictionary_get(dictionary_name)
         self.parameters = cv2.aruco.DetectorParameters_create()
 
-        self.marker_size = 0.151 
+        self.marker_size = 0.16872
 
         self.camera_matrix = np.array([
             [264.09454964, 0.0, 108.69324022],
             [0.0, 256.40073929, 111.97514945],
             [0.0, 0.0, 1.0]
         ], dtype=np.float32)
+
 
         self.dist_coeffs = np.array([
             0.33742637,
@@ -31,7 +33,15 @@ class ArucoFeatureExtractor:
             0.20974118
         ], dtype=np.float32)
 
-        self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+        # self.marker_size = 0.151 
+
+        # self.camera_matrix = np.array([
+        #     [261.00813352, 0.0, 172.1808022],
+        #     [0.0, 262.1472986, 120.76379966],
+        #     [0.0, 0.0, 1.0]
+        # ], dtype=np.float32)
+
+        # self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
         # Stores all positions for each ArUco ID
         self.aruco_positions = {}
@@ -78,7 +88,7 @@ class ArucoFeatureExtractor:
             z = float(tvec[0][2])
 
             range_m = math.sqrt(x**2 + z**2)
-            bearing_rad = math.atan2(x, z)
+            bearing_rad = math.atan2(x, z) + CAMERA_YAW_OFFSET
 
             if robot_pose is not None:
                 rx, ry, rtheta = robot_pose

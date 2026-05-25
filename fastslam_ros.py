@@ -69,6 +69,8 @@ class FastSlam_ROS(Node):
         self.lap_finished = False
         self.start_landmark_id = None
         self.start_landmark_lost = False
+        self.start_pose = None
+        self.start_landmark_forward_distance = 0.0
 
         # Minimum trajectory size before allowing lap closure
         self.min_lap_points = 30
@@ -144,6 +146,15 @@ class FastSlam_ROS(Node):
 
             measurements.append([f["aruco_id"], r, b])
 
+        odom_progress_from_start = 0.0
+        if self.start_pose is not None:
+            dx = self.latest_odom[0] - self.start_pose[0]
+            dy = self.latest_odom[1] - self.start_pose[1]
+            start_theta = self.start_pose[2]
+            odom_progress_from_start = (
+                dx * math.cos(start_theta) + dy * math.sin(start_theta)
+            )
+
         particles, est_pose, est_map = self.slam.step(
             self.latest_odom,
             measurements,
@@ -168,6 +179,19 @@ class FastSlam_ROS(Node):
             self.start_landmark_id = visible_ids[0]
             self.lap_started = True
             self.start_landmark_lost = False
+            self.start_pose = list(self.latest_odom)
+
+            start_measurement = next(
+                (m for m in measurements if m[0] == self.start_landmark_id),
+                None
+            )
+            if start_measurement is not None:
+                self.start_landmark_forward_distance = max(
+                    0.0,
+                    start_measurement[1] * math.cos(start_measurement[2])
+                )
+            else:
+                self.start_landmark_forward_distance = 0.0
 
             self.get_logger().info(
                 f"Lap started with landmark {self.start_landmark_id}"
@@ -181,6 +205,7 @@ class FastSlam_ROS(Node):
             if (
                 self.start_landmark_id not in visible_ids
                 and path_len > self.min_lap_points
+                and odom_progress_from_start >= self.start_landmark_forward_distance
             ):
                 self.start_landmark_lost = True
 
