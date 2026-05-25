@@ -96,9 +96,7 @@ class FastSLAM1(ParticleFilter):
         # Sideways movement should be small for differential-drive robot.
         # We ignore local_dy to avoid fake rotations caused by odometry noise.
         rot1 = 0.0
-        yaw_gain = 0.90
         rot2 = math.atan2(math.sin(current_odom[2] - self.prev_odom[2]), math.cos(current_odom[2] - self.prev_odom[2]))
-        rot2 *= yaw_gain        
         rot_total = rot2
 
         # --- A BARREIRA ESPACIAL ---
