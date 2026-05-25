@@ -48,16 +48,30 @@ class FastSlam_ROS(Node):
 
         self.bridge = CvBridge()
         self.extractor = ArucoFeatureExtractor()
-        
+
         self.latest_odom = None
         self.slam = None
         self.last_time = None
 
+        # Best final trajectory
         self.best_weight_path = []
 
+        # Store full trajectory of every particle
+        self.particle_paths = {}
+
+        # AMCL path + error
         self.amcl_path = Path()
         self.amcl_path.header.frame_id = "map"
         self.amcl_path_points = []
+
+        # Lap detection
+        self.lap_started = False
+        self.lap_finished = False
+        self.start_landmark_id = None
+        self.start_landmark_lost = False
+
+        # Minimum trajectory size before allowing lap closure
+        self.min_lap_points = 30
 
         #Subscrições:
 
@@ -106,54 +120,101 @@ class FastSlam_ROS(Node):
             self.last_time = time.time()
             self.get_logger().info("FastSLAM inicializado com a odometria inicial!")
 
-    #Função chamada sempre que se recebe uma mensagem no tópico da imagem comprimida
-    def imagem (self, msg):
+    def imagem(self, msg):
 
-        #Não é necessário analisar as imagens se o slam não estiver a correr
         if self.slam is None or self.latest_odom is None:
-            return 
+            return
 
         current_time = time.time()
         dt = current_time - self.last_time
         self.last_time = current_time
 
-        #Transforma a stream de bytes numa lista e o cv2 monta a imagem colorida
         np_arr = np.frombuffer(msg.data, np.uint8)
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-        #função do feature extraction
         features = self.extractor.extract(frame, robot_pose=None)
 
-        #Calcular o range e bearing de cada feature
         measurements = []
         for f in features:
             lx = f["landmark_x"]
             lz = f["landmark_y"]
+
             r = math.hypot(lx, lz)
-            b = math.atan2(-lx, lz) 
-            print(f"Feature {f['aruco_id']}: range={r:.2f}, bearing={b:.2f}")
-            
+            b = math.atan2(-lx, lz)
+
             measurements.append([f["aruco_id"], r, b])
 
+        particles, est_pose, est_map = self.slam.step(
+            self.latest_odom,
+            measurements,
+            dt
+        )
 
-        #Enviamos os dados para o slam, que retorna as coordenadas das particulas e as melhores estimativas da posição do robo e do mapa
-        particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
+        # Store full path of every particle
+        for i, p in enumerate(self.slam.particles):
+            if i not in self.particle_paths:
+                self.particle_paths[i] = []
 
-        #Guardar a melhor trajetória para publicar depois
-        best_particle = max(self.slam.particles, key=lambda p: p.weight)
-        self.best_weight_path.append([float(best_particle.state[0]), float(best_particle.state[1]), 0.15])
+            self.particle_paths[i].append([
+                float(p.state[0]),
+                float(p.state[1]),
+                0.15
+            ])
 
-        # Publicar resultados convertidos
-        self.publish_particles(particles, msg.header)
-        self.publish_map(est_map, msg.header)
+        visible_ids = [m[0] for m in measurements]
+
+        # Start lap with first visible landmark
+        if not self.lap_started and visible_ids:
+            self.start_landmark_id = visible_ids[0]
+            self.lap_started = True
+            self.start_landmark_lost = False
+
+            self.get_logger().info(
+                f"Lap started with landmark {self.start_landmark_id}"
+            )
+
+        elif self.lap_started and not self.lap_finished:
+
+            path_len = len(next(iter(self.particle_paths.values())))
+
+            # First wait until we lose the starting landmark
+            if (
+                self.start_landmark_id not in visible_ids
+                and path_len > self.min_lap_points
+            ):
+                self.start_landmark_lost = True
+
+            # Then finish lap when we see it again
+            if (
+                self.start_landmark_lost
+                and self.start_landmark_id in visible_ids
+            ):
+                self.lap_finished = True
+
+                best_index = max(
+                    range(len(self.slam.particles)),
+                    key=lambda i: self.slam.particles[i].weight
+                )
+
+                # Full path of ONE particle: final best particle
+                self.best_weight_path = self.particle_paths[best_index]
+
+                self.get_logger().info(
+                    f"Lap finished. Best particle: {best_index}"
+                )
+
+                self.publish_particles(particles, msg.header)
+                self.publish_map(est_map, msg.header)
+                self.publish_best_weight_path(msg.header)
+                self.compute_and_publish_error()
+
+        # Pose keeps publishing live
         self.publish_pose(est_pose, msg.header)
-        self.publish_best_weight_path(msg.header)
-        self.compute_and_publish_error()
 
+        # Camera debug keeps publishing live
         debug_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
-        debug_msg.header = msg.header 
+        debug_msg.header = msg.header
         self.image_pub.publish(debug_msg)
-
 
     #Cria o formato de point cloud para publicar topicos como a nuvem de particulas e as landmarks
     def create_point_cloud(self, points, header, r, g, b):
@@ -189,13 +250,13 @@ class FastSlam_ROS(Node):
     #Função para obter os parâmetros de alinhar
     def get_alignment_params(self):
 
-        angle_deg = -33
+        angle_deg = -35.3
         angle_rad = math.radians(angle_deg)
 
-        tx = -0.20
-        ty = 0.30
+        tx = 1.5
+        ty = -1.4
 
-        scale = 0.97
+        scale = 0.975
 
         if self.best_weight_path:
             cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
