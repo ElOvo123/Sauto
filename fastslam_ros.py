@@ -225,7 +225,6 @@ class FastSlam_ROS(Node):
                 self.publish_best_weight_path(msg.header)
                 self.compute_and_publish_error()
                 self.publish_odom_only_path(msg.header)
-                self.publish_amcl_path(msg.header)
                 
 
                 return
@@ -445,6 +444,7 @@ class FastSlam_ROS(Node):
             self.get_logger().info(f"--- FIRST AMCL POSE (Map Frame): X={x:.3f}, Y={y:.3f} ---")
 
             self.publish_true_landmarks(msg.header)
+            self.publish_amcl_path(msg.header)
 
         self.amcl_path_points.append([float(x), float(y)])
 
