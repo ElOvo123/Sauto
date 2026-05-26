@@ -73,6 +73,14 @@ class FastSlam_ROS(Node):
         self.start_landmark_forward_distance = 0.0
         self.odom_only_path = []
 
+        #
+        # Manual alignment parameters
+        self.manual_rotation_deg = -20.0
+        self.manual_tx = 1.8
+        self.manual_ty = -0.7
+        self.manual_scale = 1.0
+
+
         # Minimum trajectory size before allowing lap closure
         self.min_lap_points = 30
 
@@ -123,7 +131,7 @@ class FastSlam_ROS(Node):
 
         #O fastslam só é iniciado após receber a primeira mensagem de odometria (o slam precisa de uma posição inicial)
         if self.slam is None:
-            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=300)
+            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=100)
             self.last_time = time.time()
             self.get_logger().info("FastSLAM inicializado com a odometria inicial!")
 
@@ -147,7 +155,7 @@ class FastSlam_ROS(Node):
             ly = f["landmark_y"]
 
             r = math.hypot(lx, ly)
-            b = math.atan2(lx, ly)
+            b = math.atan2(-lx, ly)
 
             measurements.append([f["aruco_id"], r, b])
         
@@ -206,18 +214,18 @@ class FastSlam_ROS(Node):
                 self.best_weight_landmarks = {m_id: [float(ekf.state_estimate[0]), float(ekf.state_estimate[1])] for m_id, ekf in best_particle.landmarks.items()}
 
                 # Compute optimal alignment once the map is finalized
-                # cx, cy, ang, tx, ty, sc = self.compute_optimal_alignment()
-                # self.optimal_params = (cx, cy, ang, tx, ty, sc)
-                # self.get_logger().info(f"Optimal alignment computed: Angle={math.degrees(ang):.2f} deg, T=({tx:.2f}, {ty:.2f})")
+                #cx, cy, ang, tx, ty, sc = self.compute_optimal_alignment()
+                #self.optimal_params = (cx, cy, ang, tx, ty, sc)
+                #self.get_logger().info(f"Optimal alignment computed: Angle={math.degrees(ang):.2f} deg, T=({tx:.2f}, {ty:.2f})")
                 self.get_logger().info(f"Lap finished. Best particle weight: {best_particle.weight}")
 
-                self.publish_amcl_path(msg.header)
+            
                 self.publish_particles(particles, msg.header)
                 self.publish_map(self.best_weight_landmarks, msg.header)
                 self.publish_best_weight_path(msg.header)
                 self.compute_and_publish_error()
                 self.publish_odom_only_path(msg.header)
-                
+                self.publish_amcl_path(msg.header)
                 
 
                 return
@@ -261,53 +269,98 @@ class FastSlam_ROS(Node):
         msg.data = bytes(buffer)
         return msg
     
+    # Função de alinhamento manual para comparação
+    def manual_align_point(self, x, y):
+        angle = math.radians(self.manual_rotation_deg)
+
+        cx, cy = self.get_image_center()
+
+        # move point to image center
+        dx = x - cx
+        dy = y - cy
+
+        # scale around image center
+        dx *= self.manual_scale
+        dy *= self.manual_scale
+
+        # rotate around image center
+        xr = dx * math.cos(angle) - dy * math.sin(angle)
+        yr = dx * math.sin(angle) + dy * math.cos(angle)
+
+        # move back + manual translation
+        xr = xr + cx + self.manual_tx
+        yr = yr + cy + self.manual_ty
+
+        return xr, yr
+    
     #Função para obter os parâmetros de alinhar
     def get_alignment_params(self):
-        # ------ Uncomment next section to use SVD (and coment normal alignment function)------
-        # # Once the lap is finished, use the computed optimal parameters
-        # if self.lap_finished and hasattr(self, 'optimal_params'):
-        #     return self.optimal_params
+        # Once the lap is finished, use the computed optimal parameters
+        if self.lap_finished and hasattr(self, 'optimal_params'):
+            return self.optimal_params
         
-        # # Default fallback
-        # return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
-        # ------ SVD ------
-
-        angle_deg = -35
-        angle_rad = math.radians(angle_deg)
-
-        tx = 0
-        ty = 0
-
-        scale = 1.0
-
-        if self.best_weight_path:
-            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
-            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
-        else:
-            cx = 0.0
-            cy = 0.0
-
-        return cx, cy, angle_rad, tx, ty, scale
-
+        # Default fallback
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
 
 
     #Alinhamento dos pontos para o foxglove 
     def align_point(self, x, y):
+
+        x, y = self.manual_align_point(x, y)
 
         cx, cy, angle_rad, tx, ty, scale = self.get_alignment_params()
 
         dx = x - cx
         dy = y - cy
 
-        # Scale relative to center
         dx *= scale
         dy *= scale
 
-        # Rotate + translate
         x_aligned = cx + dx * math.cos(angle_rad) - dy * math.sin(angle_rad) + tx
         y_aligned = cy + dx * math.sin(angle_rad) + dy * math.cos(angle_rad) + ty
 
         return x_aligned, y_aligned
+    
+    #Função para obter o centro da imagem/mapa, para usar como referência no alinhamento
+    def get_image_center(self):
+        """
+        Center of the map/image in map coordinates.
+
+        Your true landmarks are converted to map frame with:
+            map_x = phys_y + offset_x
+            map_y = -phys_x + offset_y
+
+        So we use the center of those converted true landmarks as the image center.
+        """
+
+        offset_x = -1.918
+        offset_y = 0.563
+
+        true_landmarks_data = {
+            19: [0.07, 4.39], 0: [0.07, 7.39], 17: [1.67, 8.79], 18: [0.07, 10.34],
+            16: [0.07, 13.34], 5: [0.17, 15.74], 15: [2.68, 14.38], 14: [6.14, 15.68],
+            13: [8.55, 14.35], 11: [13.29, 15.68], 12: [15.74, 15.00], 10: [15.66, 9.76],
+            7: [14.08, 6.86], 9: [14.44, 5.81], 8: [15.66, 2.46], 6: [15.6, 0.01],
+            2: [9.67, 0.07], 1: [8.20, 1.6], 3: [3.71, 0.05], 4: [0.02, 0.75]
+        }
+
+        points = []
+
+        for _, coords in true_landmarks_data.items():
+            phys_x = coords[0]
+            phys_y = coords[1]
+
+            map_x = phys_y + offset_x
+            map_y = -phys_x + offset_y
+
+            points.append([map_x, map_y])
+
+        pts = np.array(points)
+
+        cx = float(np.mean(pts[:, 0]))
+        cy = float(np.mean(pts[:, 1]))
+
+        return cx, cy
 
     #Publicar a nuvem de particulas
     def publish_particles(self, particles, header):
@@ -318,10 +371,11 @@ class FastSlam_ROS(Node):
         points = []
 
         for p in particles:
+            # ROTATE FASTSLAM PARTICLES ONLY
             x, y = self.align_point(float(p[0]), float(p[1]))
             points.append([x, y, 0.05])
 
-        cloud_msg = self.create_point_cloud(points,header,255,0,0)
+        cloud_msg = self.create_point_cloud(points, header, 255, 0, 0)
         self.particles_pub.publish(cloud_msg)
 
     #Publicar a trajetória do odom apenas
@@ -332,7 +386,8 @@ class FastSlam_ROS(Node):
         points = []
 
         for p in self.odom_only_path:
-            x, y = self.align_point(float(p[0]), float(p[1]))
+            #x, y = self.align_point(float(p[0]), float(p[1]))
+            x, y = float(p[0]), float(p[1])
             points.append([x, y, float(p[2])])
 
         cloud_msg = self.create_point_cloud(points, header, 255, 165, 0)
@@ -347,10 +402,11 @@ class FastSlam_ROS(Node):
         points = []
 
         for _, coords in est_map.items():
-            x, y = self.align_point(float(coords[0]),float(coords[1]))
-            points.append([x,y,0.1])
+            # ROTATE FASTSLAM LANDMARKS ONLY
+            x, y = self.align_point(float(coords[0]), float(coords[1]))
+            points.append([x, y, 0.1])
 
-        cloud_msg = self.create_point_cloud(points,header,0,255,0)
+        cloud_msg = self.create_point_cloud(points, header, 0, 255, 0)
         self.map_pub.publish(cloud_msg)
 
     #Publicar a posição estimada
@@ -372,10 +428,11 @@ class FastSlam_ROS(Node):
         aligned_path = []
 
         for p in self.best_weight_path:
-            x, y = self.align_point(float(p[0]),float(p[1]))
-            aligned_path.append([x,y,float(p[2])])
+            # ROTATE FASTSLAM BEST PATH ONLY
+            x, y = self.align_point(float(p[0]), float(p[1]))
+            aligned_path.append([x, y, float(p[2])])
 
-        cloud_msg = self.create_point_cloud(aligned_path,header,0,0,255)
+        cloud_msg = self.create_point_cloud(aligned_path, header, 0, 0, 255)
         self.best_weight_path_pub.publish(cloud_msg)
 
     #Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
@@ -505,7 +562,8 @@ class FastSlam_ROS(Node):
                 map_x = phys_y + offset_x
                 map_y = -phys_x + offset_y
 
-                est_pts.append(est_coords)
+                mx, my = self.manual_align_point(float(est_coords[0]), float(est_coords[1]))
+                est_pts.append([mx, my])
                 true_pts.append([map_x, map_y])
 
         if len(est_pts) < 3: # Need at least 3 points for a robust alignment
