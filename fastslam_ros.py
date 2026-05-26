@@ -75,9 +75,9 @@ class FastSlam_ROS(Node):
 
         #
         # Manual alignment parameters
-        self.manual_rotation_deg = -20.0
-        self.manual_tx = 1.8
-        self.manual_ty = -0.7
+        self.manual_rotation_deg = 0#-20.0
+        self.manual_tx = 0#1.8
+        self.manual_ty = 0#-0.7
         self.manual_scale = 1.0
 
 
@@ -435,6 +435,7 @@ class FastSlam_ROS(Node):
         self.best_weight_path_pub.publish(cloud_msg)
 
     #Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
+    # Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
     def amcl_callback(self, msg):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
@@ -442,11 +443,15 @@ class FastSlam_ROS(Node):
         # Log the VERY FIRST position AMCL calculates
         if not self.amcl_path_points:
             self.get_logger().info(f"--- FIRST AMCL POSE (Map Frame): X={x:.3f}, Y={y:.3f} ---")
-
+            
+            # True landmarks are static, so publishing them once here is fine
             self.publish_true_landmarks(msg.header)
-            self.publish_amcl_path(msg.header)
 
+        # 1. ALWAYS add the new point to the tracking list
         self.amcl_path_points.append([float(x), float(y)])
+
+        # 2. ALWAYS publish the path AFTER adding the point so it draws immediately and grows
+        self.publish_amcl_path(msg.header)
 
     #Publicar a trajetória do amcl, alinhada com a trajetória do fastslam para comparação no foxglove
     def publish_amcl_path(self, header):
