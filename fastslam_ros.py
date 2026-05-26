@@ -456,14 +456,13 @@ class FastSlam_ROS(Node):
     def compute_optimal_alignment(self):
         """
         Uses SVD to find optimal rotation and translation between
-        estimated landmarks and ground truth landmarks.
+        estimated landmarks and ground truth landmarks in the map frame.
         """
         # 1. Pair up the landmarks (only those that appear in both)
         est_pts = []
         true_pts = []
         
         # Hardcoded ground truth used in publish_true_landmarks
-        # Ensure these match the dictionary keys in your publish_true_landmarks!
         true_landmarks_data = {
             19: [0.07, 4.39], 0: [0.07, 7.39], 17: [1.67, 8.79], 18: [0.07, 10.34],
             16: [0.07, 13.34], 5: [0.17, 15.74], 15: [2.68, 14.38], 14: [6.14, 15.68],
@@ -472,14 +471,25 @@ class FastSlam_ROS(Node):
             2: [9.67, 0.07], 1: [8.20, 1.6], 3: [3.71, 0.05], 4: [0.02, 0.75]
         }
 
+        # Offsets used to bring physical coordinates into the map frame
+        offset_x = -1.918  
+        offset_y = 0.563
+
         for l_id, est_coords in self.best_weight_landmarks.items():
             if l_id in true_landmarks_data:
-                # Need to map physical ground truth to the same frame as est_coords
-                # Here we just pair the points directly
+                phys_x = true_landmarks_data[l_id][0]
+                phys_y = true_landmarks_data[l_id][1]
+
+                # CRITICAL FIX: Standardize physical landmarks to the Map Frame 
+                # using your exact transformation formula
+                map_x = phys_y + offset_x
+                map_y = -phys_x + offset_y
+
                 est_pts.append(est_coords)
-                true_pts.append(true_landmarks_data[l_id])
+                true_pts.append([map_x, map_y])
 
         if len(est_pts) < 3: # Need at least 3 points for a robust alignment
+            self.get_logger().warn("Not enough matching landmarks to compute optimal alignment.")
             return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
 
         # Convert to numpy
@@ -497,11 +507,21 @@ class FastSlam_ROS(Node):
         U, S, Vt = np.linalg.svd(H)
         R = np.dot(Vt.T, U.T)
         
-        # Translation
+        # Ensure right-handed coordinate system (handles reflection edge cases)
+        if np.linalg.det(R) < 0:
+            Vt[1, :] *= -1
+            R = np.dot(Vt.T, U.T)
+        
+        # Translation vector: t = centroid_B - R * centroid_A
         t = centroid_B - np.dot(R, centroid_A)
         
         angle_rad = math.atan2(R[1,0], R[0,0])
         
+        self.get_logger().info(f"--- SVD Optimization Complete ---")
+        self.get_logger().info(f"Fine-tuning Rotation: {math.degrees(angle_rad):.3f} degrees")
+        self.get_logger().info(f"Fine-tuning Translation: X={t[0]:.3f}m, Y={t[1]:.3f}m")
+        
+        # Return parameters matching the expected return structure
         return centroid_A[0], centroid_A[1], angle_rad, t[0], t[1], 1.0
 
     #Publicar a trajetória do amcl
