@@ -206,18 +206,18 @@ class FastSlam_ROS(Node):
                 self.best_weight_landmarks = {m_id: [float(ekf.state_estimate[0]), float(ekf.state_estimate[1])] for m_id, ekf in best_particle.landmarks.items()}
 
                 # Compute optimal alignment once the map is finalized
-                cx, cy, ang, tx, ty, sc = self.compute_optimal_alignment()
-                self.optimal_params = (cx, cy, ang, tx, ty, sc)
-                self.get_logger().info(f"Optimal alignment computed: Angle={math.degrees(ang):.2f} deg, T=({tx:.2f}, {ty:.2f})")
+                # cx, cy, ang, tx, ty, sc = self.compute_optimal_alignment()
+                # self.optimal_params = (cx, cy, ang, tx, ty, sc)
+                # self.get_logger().info(f"Optimal alignment computed: Angle={math.degrees(ang):.2f} deg, T=({tx:.2f}, {ty:.2f})")
                 self.get_logger().info(f"Lap finished. Best particle weight: {best_particle.weight}")
 
-            
+                self.publish_amcl_path(msg.header)
                 self.publish_particles(particles, msg.header)
                 self.publish_map(self.best_weight_landmarks, msg.header)
                 self.publish_best_weight_path(msg.header)
                 self.compute_and_publish_error()
                 self.publish_odom_only_path(msg.header)
-                self.publish_amcl_path(msg.header)
+                
                 
 
                 return
@@ -263,12 +263,32 @@ class FastSlam_ROS(Node):
     
     #Função para obter os parâmetros de alinhar
     def get_alignment_params(self):
-        # Once the lap is finished, use the computed optimal parameters
-        if self.lap_finished and hasattr(self, 'optimal_params'):
-            return self.optimal_params
+        # ------ Uncomment next section to use SVD (and coment normal alignment function)------
+        # # Once the lap is finished, use the computed optimal parameters
+        # if self.lap_finished and hasattr(self, 'optimal_params'):
+        #     return self.optimal_params
         
-        # Default fallback
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
+        # # Default fallback
+        # return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
+        # ------ SVD ------
+
+        angle_deg = -35
+        angle_rad = math.radians(angle_deg)
+
+        tx = 0
+        ty = 0
+
+        scale = 1.0
+
+        if self.best_weight_path:
+            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
+            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
+        else:
+            cx = 0.0
+            cy = 0.0
+
+        return cx, cy, angle_rad, tx, ty, scale
+
 
 
     #Alinhamento dos pontos para o foxglove 
