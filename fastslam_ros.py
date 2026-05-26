@@ -123,7 +123,7 @@ class FastSlam_ROS(Node):
 
         #O fastslam só é iniciado após receber a primeira mensagem de odometria (o slam precisa de uma posição inicial)
         if self.slam is None:
-            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=300)
+            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=100)
             self.last_time = time.time()
             self.get_logger().info("FastSLAM inicializado com a odometria inicial!")
 
@@ -147,7 +147,7 @@ class FastSlam_ROS(Node):
             ly = f["landmark_y"]
 
             r = math.hypot(lx, ly)
-            b = math.atan2(lx, ly)
+            b = math.atan2(-lx, ly)
 
             measurements.append([f["aruco_id"], r, b])
         
@@ -312,7 +312,8 @@ class FastSlam_ROS(Node):
         points = []
 
         for p in self.odom_only_path:
-            x, y = self.align_point(float(p[0]), float(p[1]))
+            #x, y = self.align_point(float(p[0]), float(p[1]))
+            x, y = float(p[0]), float(p[1])
             points.append([x, y, float(p[2])])
 
         cloud_msg = self.create_point_cloud(points, header, 255, 165, 0)

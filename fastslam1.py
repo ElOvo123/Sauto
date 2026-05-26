@@ -70,8 +70,8 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.01, 0.0002, 0.0002, 0.0002]
-        self.R_noise = np.array([[0.05, 0.0], [0.0, 0.05]]) 
+        self.alphas = [0.22, 0.03, 0.001, 0.001]
+        self.R_noise = np.array([[0.1, 0.0], [0.0, 0.1]]) 
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
@@ -142,13 +142,6 @@ class FastSLAM1(ParticleFilter):
         if len(measurements) > 0:
             self._update_maps(measurements)
             self.is_initialized = True
-
-        # print(
-        #     "weights:",
-        #     "max=", max(p.weight for p in self.particles),
-        #     "min=", min(p.weight for p in self.particles),
-        #     "neff=", self.effective_sample_size()
-        # )
 
         # Store current pose in each particle path
         self._store_particle_paths()
@@ -224,7 +217,7 @@ class FastSLAM1(ParticleFilter):
 
                     p.landmarks[m_id] = ExtendedKalmanFilter(
                         initial_state=np.array([lx, ly]),
-                        initial_covariance=np.eye(2) * 0.5,
+                        initial_covariance=np.eye(2) * 1.0,
                         process_noise_covariance=np.zeros((2, 2)),
                         measurement_noise_covariance=self.R_noise,
                         motion_model=landmark_motion_model,
