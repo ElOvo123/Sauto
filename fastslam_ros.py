@@ -75,9 +75,9 @@ class FastSlam_ROS(Node):
 
         #
         # Manual alignment parameters
-        self.manual_rotation_deg = -20.0
-        self.manual_tx = 1.8
-        self.manual_ty = -0.7
+        self.manual_rotation_deg = 0#-20.0
+        self.manual_tx = 0#1.8
+        self.manual_ty = 0#-0.7
         self.manual_scale = 1.0
 
 
