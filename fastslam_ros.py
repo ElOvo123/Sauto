@@ -104,6 +104,8 @@ class FastSlam_ROS(Node):
         self.best_weight_path_pub = self.create_publisher(PointCloud2, '/fastslam/best_weight_path', 10)
         #Publicar o tópico com a trajetória do amcl
         self.amcl_path_pub = self.create_publisher(PointCloud2,'/amcl/path',10)
+        # Publicar o tópico com as true landmarks
+        self.true_landmarks_pub = self.create_publisher(PointCloud2, '/fastslam/true_landmarks', 10)
 
         #O logger é semelhante a um print, mas para além disso cria um tópico ros com os loggs
         self.get_logger().info("FastSLAM ROS Node iniciado!")
@@ -203,14 +205,20 @@ class FastSlam_ROS(Node):
 
                 self.best_weight_landmarks = {m_id: [float(ekf.state_estimate[0]), float(ekf.state_estimate[1])] for m_id, ekf in best_particle.landmarks.items()}
 
+                # Compute optimal alignment once the map is finalized
+                cx, cy, ang, tx, ty, sc = self.compute_optimal_alignment()
+                self.optimal_params = (cx, cy, ang, tx, ty, sc)
+                self.get_logger().info(f"Optimal alignment computed: Angle={math.degrees(ang):.2f} deg, T=({tx:.2f}, {ty:.2f})")
                 self.get_logger().info(f"Lap finished. Best particle weight: {best_particle.weight}")
 
+            
                 self.publish_particles(particles, msg.header)
                 self.publish_map(self.best_weight_landmarks, msg.header)
                 self.publish_best_weight_path(msg.header)
                 self.compute_and_publish_error()
                 self.publish_odom_only_path(msg.header)
                 self.publish_amcl_path(msg.header)
+                
 
                 return
 
@@ -255,23 +263,12 @@ class FastSlam_ROS(Node):
     
     #Função para obter os parâmetros de alinhar
     def get_alignment_params(self):
-
-        angle_deg = 0
-        angle_rad = math.radians(angle_deg)
-
-        tx = 0
-        ty = 0
-
-        scale = 1.0
-
-        if self.best_weight_path:
-            cx = sum(p[0] for p in self.best_weight_path) / len(self.best_weight_path)
-            cy = sum(p[1] for p in self.best_weight_path) / len(self.best_weight_path)
-        else:
-            cx = 0.0
-            cy = 0.0
-
-        return cx, cy, angle_rad, tx, ty, scale
+        # Once the lap is finished, use the computed optimal parameters
+        if self.lap_finished and hasattr(self, 'optimal_params'):
+            return self.optimal_params
+        
+        # Default fallback
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
 
 
     #Alinhamento dos pontos para o foxglove 
@@ -366,6 +363,12 @@ class FastSlam_ROS(Node):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
+        # Log the VERY FIRST position AMCL calculates
+        if not self.amcl_path_points:
+            self.get_logger().info(f"--- FIRST AMCL POSE (Map Frame): X={x:.3f}, Y={y:.3f} ---")
+
+            self.publish_true_landmarks(msg.header)
+
         self.amcl_path_points.append([float(x), float(y)])
 
     #Publicar a trajetória do amcl, alinhada com a trajetória do fastslam para comparação no foxglove
@@ -377,7 +380,7 @@ class FastSlam_ROS(Node):
         points = []
 
         for p in self.amcl_path_points:
-            x, y = self.align_point(float(p[0]), float(p[1]))
+            x, y = float(p[0]), float(p[1])
             points.append([x, y, 0.14])
 
         cloud_msg = self.create_point_cloud(
@@ -389,9 +392,117 @@ class FastSlam_ROS(Node):
             frame_id="map"
         )
 
-        print (points)
+        #print (points)
 
         self.amcl_path_pub.publish(cloud_msg)
+
+    def publish_true_landmarks(self, header):
+        
+        # Offsets calculated after rotating 90-degrees clockwise
+        offset_x = -1.918  
+        offset_y = 0.563
+
+        self.landmarks = {
+             # Left corridor
+            19: [0.07, 4.39],
+            0: [0.07, 7.39],
+            17: [1.67, 8.79],
+            18: [0.07, 10.34],
+            16: [0.07, 13.34],
+            5: [0.17, 15.74],
+            # Top corridor
+            15: [2.68, 14.38],
+            14: [6.14, 15.68],
+            13: [8.55, 14.35],
+            11: [13.29, 15.68],
+            12: [15.74, 15.00],
+            # Right corridor
+            10: [15.66, 9.76],   
+            7: [14.08, 6.86], 
+            9: [14.44, 5.81], 
+            8: [15.66, 2.46],
+            6: [15.6, 0.01],
+            # bottom corridor 
+            2: [9.67, 0.07],   
+            1: [8.20, 1.6],
+            3: [3.71, 0.05], 
+            4: [0.02, 0.75], 
+        }
+
+        points = []
+        for lm_id, coords in self.landmarks.items():
+            phys_x = coords[0]
+            phys_y = coords[1]
+
+            # Apply 90-degree rotation AND the translation offset
+            map_x = phys_y + offset_x
+            map_y = -phys_x + offset_y
+            
+            # Z=0.2 elevates them slightly so they don't clip into the floor
+            points.append([map_x, map_y, 0.2])
+
+        # Publish in the "map" frame, colored Yellow (R=255, G=255, B=0)
+        cloud_msg = self.create_point_cloud(
+            points, 
+            header, 
+            255, 255, 0, 
+            frame_id="map"
+        )
+        
+        # You will need to create this publisher in your __init__:
+        # self.true_landmarks_pub = self.create_publisher(PointCloud2, '/fastslam/true_landmarks', 10)
+        self.true_landmarks_pub.publish(cloud_msg)
+
+    def compute_optimal_alignment(self):
+        """
+        Uses SVD to find optimal rotation and translation between
+        estimated landmarks and ground truth landmarks.
+        """
+        # 1. Pair up the landmarks (only those that appear in both)
+        est_pts = []
+        true_pts = []
+        
+        # Hardcoded ground truth used in publish_true_landmarks
+        # Ensure these match the dictionary keys in your publish_true_landmarks!
+        true_landmarks_data = {
+            19: [0.07, 4.39], 0: [0.07, 7.39], 17: [1.67, 8.79], 18: [0.07, 10.34],
+            16: [0.07, 13.34], 5: [0.17, 15.74], 15: [2.68, 14.38], 14: [6.14, 15.68],
+            13: [8.55, 14.35], 11: [13.29, 15.68], 12: [15.74, 15.00], 10: [15.66, 9.76],
+            7: [14.08, 6.86], 9: [14.44, 5.81], 8: [15.66, 2.46], 6: [15.6, 0.01],
+            2: [9.67, 0.07], 1: [8.20, 1.6], 3: [3.71, 0.05], 4: [0.02, 0.75]
+        }
+
+        for l_id, est_coords in self.best_weight_landmarks.items():
+            if l_id in true_landmarks_data:
+                # Need to map physical ground truth to the same frame as est_coords
+                # Here we just pair the points directly
+                est_pts.append(est_coords)
+                true_pts.append(true_landmarks_data[l_id])
+
+        if len(est_pts) < 3: # Need at least 3 points for a robust alignment
+            return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
+
+        # Convert to numpy
+        A = np.array(est_pts)
+        B = np.array(true_pts)
+
+        # Center data
+        centroid_A = np.mean(A, axis=0)
+        centroid_B = np.mean(B, axis=0)
+        AA = A - centroid_A
+        BB = B - centroid_B
+
+        # Covariance matrix and SVD
+        H = np.dot(AA.T, BB)
+        U, S, Vt = np.linalg.svd(H)
+        R = np.dot(Vt.T, U.T)
+        
+        # Translation
+        t = centroid_B - np.dot(R, centroid_A)
+        
+        angle_rad = math.atan2(R[1,0], R[0,0])
+        
+        return centroid_A[0], centroid_A[1], angle_rad, t[0], t[1], 1.0
 
     #Publicar a trajetória do amcl
     def compute_and_publish_error(self):
