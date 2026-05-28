@@ -70,7 +70,7 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.22, 0.03, 0.001, 0.001]
+        self.alphas = [0.80, 0.03, 0.001, 0.001]
         self.R_noise = np.array([[0.1, 0.0], [0.0, 0.1]]) 
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
