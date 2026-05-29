@@ -238,7 +238,7 @@ class FastSlam_ROS(Node):
         self.image_pub.publish(debug_msg)
 
     #Cria o formato de point cloud para publicar topicos como a nuvem de particulas e as landmarks
-    def create_point_cloud(self, points, header, r, g, b, frame_id="odom"):
+    def create_point_cloud(self, points, header, r, g, b, frame_id="map"):
         """Converte uma lista de [x, y, z] numa mensagem PointCloud2 com cor RGBA"""
         msg = PointCloud2()
         msg.header.frame_id = frame_id
