@@ -13,10 +13,8 @@ class Particle:
         new_p = Particle(self.state.copy(), self.weight)
         new_p.landmarks = copy.deepcopy(self.landmarks)
 
-        if hasattr(self, "path"):
-            new_p.path = copy.deepcopy(self.path)
-        else:
-            new_p.path = []
+        if hasattr(self, "node_id"):
+            new_p.node_id = self.node_id
 
         return new_p
 
