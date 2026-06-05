@@ -144,7 +144,7 @@ class FastSlam_ROS(Node):
         #O fastslam só é iniciado após receber a primeira mensagem de odometria (o slam precisa de uma posição inicial)
         if self.slam is None:
             self.initial_odom = list(self.latest_odom)
-            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=100, seed=42)
+            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=300, seed=42)
             self.last_time = None
             self.get_logger().info("FastSLAM inicializado com a odometria inicial!")
 
@@ -177,13 +177,7 @@ class FastSlam_ROS(Node):
 
         measurements = []
         for f in features:
-            lx = f["landmark_x"]
-            ly = f["landmark_y"]
-
-            r = math.hypot(lx, ly)
-            b = -math.atan2(lx, ly)
-
-            measurements.append([f["aruco_id"], r, b])
+            measurements.append([f["aruco_id"], f["range"], f["bearing"]])
         
         odom_progress_from_start = 0.0
         if self.start_pose is not None:
@@ -405,6 +399,12 @@ class FastSlam_ROS(Node):
 
     #Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
     def amcl_callback(self, msg):
+
+        if self.latest_odom is None:
+            self.get_logger().warn("Mensagem AMCL ignorada: Odometria ainda não foi recebida.")
+            return
+
+
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 

@@ -71,13 +71,13 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.001, 0.001, 0.3, 0.001]   #try smaller in 0 maybe 0.0001 
-        self.R_noise = np.array([[0.1, 0.0], [0.0, 0.1]]) #
+        self.alphas = [0.5287710970854175, 0.0381591500825484, 0.8658806876124424, 0.42079901030921503]   #try smaller in 0 maybe 0.0001 
+        self.R_noise = np.array([[0.0927371260082788, 0.0], [0.0, 0.02961659978720378]]) #
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
-        self.min_trans_update = 0.005 # Tem de andar 5cm
-        self.min_rot_update = 0.005    # Ou rodar ~3 graus   
+        self.min_trans_update = 0.05 # Tem de andar 5cm
+        self.min_rot_update = 0.05    # Ou rodar ~3 graus   
         self.is_initialized = False
 
         # Histórico global:

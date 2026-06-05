@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import math
 
-CAMERA_YAW_OFFSET = math.radians(-9)  # approximate from your error
+CAMERA_YAW_OFFSET = math.radians(8)  # approximate from your error
 
 class ArucoFeatureExtractor:
     def __init__(self, dictionary_name=cv2.aruco.DICT_4X4_50):
@@ -17,6 +17,7 @@ class ArucoFeatureExtractor:
         self.parameters = cv2.aruco.DetectorParameters_create()
 
         self.marker_size = 0.16872
+        self.marker_size = 0.151
 
         self.camera_matrix = np.array([
             [264.09454964, 0.0, 108.69324022],
@@ -88,13 +89,18 @@ class ArucoFeatureExtractor:
             z = float(tvec[0][2])
 
             range_m = math.sqrt(x**2 + z**2)
-            bearing_rad = math.atan2(x, z) + CAMERA_YAW_OFFSET
+            bearing_rad = math.atan2(-x, z) + CAMERA_YAW_OFFSET
 
             if robot_pose is not None:
                 rx, ry, rtheta = robot_pose
 
-                landmark_x = rx + range_m * math.cos(rtheta + bearing_rad)
-                landmark_y = ry + range_m * math.sin(rtheta + bearing_rad)
+                cam_offset_x = 0.05
+                cam_x = rx + cam_offset_x * math.cos(rtheta)
+                cam_y = ry + cam_offset_x * math.sin(rtheta)
+
+                # Calcular a posição global do ArUco a partir da lente da câmara, não do centro do robô
+                landmark_x = cam_x + range_m * math.cos(rtheta + bearing_rad)
+                landmark_y = cam_y + range_m * math.sin(rtheta + bearing_rad)
             else:
                 landmark_x = x
                 landmark_y = z
@@ -110,6 +116,8 @@ class ArucoFeatureExtractor:
 
             features.append({
                 "aruco_id": aruco_id,
+                "range": float(range_m),
+                "bearing": float(bearing_rad),
                 "landmark_x": float(landmark_x),
                 "landmark_y": float(landmark_y),
             })
