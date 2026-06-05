@@ -2,6 +2,8 @@ import math
 import numpy as np
 from particle_filter import ParticleFilter
 from ekf import ExtendedKalmanFilter
+import json   
+import os
 
 # --- FUNÇÕES ESTÁTICAS (EKF) ---
 def landmark_motion_model(state_estimate, control_input=None):
@@ -71,8 +73,8 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.5287710970854175, 0.0381591500825484, 0.8658806876124424, 0.42079901030921503]   #try smaller in 0 maybe 0.0001 
-        self.R_noise = np.array([[0.0927371260082788, 0.0], [0.0, 0.02961659978720378]]) #
+        self.alphas = [0.535, 0.140, 1.042, 0.170]   #try smaller in 0 maybe 0.0001 
+        self.R_noise = np.array([[0.7107, 0.0], [0.0, 0.1330]]) #
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
