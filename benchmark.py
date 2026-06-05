@@ -95,4 +95,4 @@ if resultados:
     # Guardar a imagem
     plt.savefig('grafico_benchmark.png', bbox_inches='tight')
     print("\n==================================================")
-    print("🎉 BENCHMARK CONCLUÍDO! O gráfico foi guardado como 'grafico_benchmark.png'")
+    print("BENCHMARK CONCLUÍDO! O gráfico foi guardado como 'grafico_benchmark.png'")

@@ -97,7 +97,7 @@ except KeyboardInterrupt:
     print("\n[!] Otimização interrompida manualmente antes do fim.")
 
 print("\n=================================================")
-print("🏁 OTIMIZAÇÃO DE 1 HORA CONCLUÍDA 🏁")
+print("OTIMIZAÇÃO DE 1 HORA CONCLUÍDA")
 print(f"O Menor ATE Absoluto alcançado foi: {study.best_value:.4f}")
 best = study.best_params
 print(f"Alphas = [{best['alpha_1_rot_rot']:.3f}, {best['alpha_2_rot_trans']:.3f}, {best['alpha_3_trans_trans']:.3f}, {best['alpha_4_trans_rot']:.3f}]")

@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 
 from turtlebot import SimulatedTurtlebot
 from environment import Environment
-from fastslam2 import FastSLAM2
 from fastslam1 import FastSLAM1
 
 # --- CONFIGURATION ---

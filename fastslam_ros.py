@@ -291,7 +291,7 @@ class FastSlam_ROS(Node):
                         else:
                             rmse = 999.0
                             
-                    self.get_logger().info(f"🏁 FIM DA VOLTA! Erro Chamfer (Melhor Partícula): {rmse:.4f} metros")
+                    self.get_logger().info(f"FIM DA VOLTA! Erro Chamfer (Melhor Partícula): {rmse:.4f} metros")
 
                     with open("resultado_rmse.txt", "w") as f:
                         f.write(str(rmse))
