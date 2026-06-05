@@ -1,4 +1,6 @@
 import math
+import os
+import json
 import numpy as np
 from particle_filter import ParticleFilter
 from ekf import ExtendedKalmanFilter
@@ -71,13 +73,24 @@ class FastSLAM1(ParticleFilter):
         self.prev_odom = np.array(initial_pose, dtype=float)
         
         # Parâmetros
-        self.alphas = [0.001, 0.25, 0.001, 0.001]   #try smaller in 0 maybe 0.0001 
-        self.R_noise = np.array([[0.1, 0.0], [0.0, 0.1]]) #
+        if os.path.exists("parametros_atuais.json"):
+            with open("parametros_atuais.json", "r") as f:
+                params = json.load(f)
+
+            self.alphas = params["alphas"]
+            self.R_noise = np.array([[params["r_noise_dist"], 0.0], [0.0, params["r_noise_ang"]]])
+
+            print("Loaded Optuna params:", self.alphas, self.R_noise)
+
+        else:
+            self.alphas = [0.448, 0.101, 1.016, 0.286]
+            self.R_noise = np.array([[0.4272, 0.0], [0.0, 0.4603]])
+            print("Using default params:", self.alphas, self.R_noise)
 
         # NOVOS PARÂMETROS PARA RESOLVER O ERRO TEMPORAL
         # O SLAM só corre se o robô andar 5 cm ou rodar ~3 graus (0.05 radianos)
-        self.min_trans_update = 0.005 # Tem de andar 5cm
-        self.min_rot_update = 0.005    # Ou rodar ~3 graus   
+        self.min_trans_update = 0.05 # Tem de andar 5cm
+        self.min_rot_update = 0.05    # Ou rodar ~3 graus   
         self.is_initialized = False
 
         # Histórico global:
@@ -291,3 +304,4 @@ class FastSLAM1(ParticleFilter):
         else:
             for p in self.particles:
                 p.weight = 1.0 / self.num_particles
+

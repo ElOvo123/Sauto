@@ -50,6 +50,10 @@ class FastSlam_ROS(Node):
         self.bridge = CvBridge()
         self.extractor = ArucoFeatureExtractor()
 
+        self.initial_odom = None   
+        self.initial_amcl = None
+        self.sync_odom = None
+
         self.latest_odom = None
         self.slam = None
         self.last_time = None
@@ -139,7 +143,8 @@ class FastSlam_ROS(Node):
 
         #O fastslam só é iniciado após receber a primeira mensagem de odometria (o slam precisa de uma posição inicial)
         if self.slam is None:
-            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=100, seed=42)
+            self.initial_odom = list(self.latest_odom)
+            self.slam = FastSLAM1(initial_pose=self.latest_odom, num_particles=300, seed=42)
             self.last_time = None
             self.get_logger().info("FastSLAM inicializado com a odometria inicial!")
 
@@ -147,6 +152,13 @@ class FastSlam_ROS(Node):
 
         if self.slam is None or self.latest_odom is None:
             return
+
+        if not hasattr(self, 'ecra_limpo'):
+            empty_cloud = self.create_point_cloud([], msg.header, 0, 0, 0)
+            self.particles_pub.publish(empty_cloud)
+            self.map_pub.publish(empty_cloud)
+            self.best_weight_path_pub.publish(empty_cloud)
+            self.ecra_limpo = True
 
         # Use bag timestamp instead of wall clock
         current_time = (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
@@ -165,13 +177,7 @@ class FastSlam_ROS(Node):
 
         measurements = []
         for f in features:
-            lx = f["landmark_x"]
-            ly = f["landmark_y"]
-
-            r = math.hypot(lx, ly)
-            b = -math.atan2(lx, ly)
-
-            measurements.append([f["aruco_id"], r, b])
+            measurements.append([f["aruco_id"], f["range"], f["bearing"]])
         
         odom_progress_from_start = 0.0
         if self.start_pose is not None:
@@ -183,12 +189,10 @@ class FastSlam_ROS(Node):
         t0 = time.perf_counter()
 
         particles, est_pose, est_map = self.slam.step(self.latest_odom, measurements, dt)
-        self.collect_motion_calibration_sample()
-        self.collect_measurement_calibration_samples(measurements)
 
         t1 = time.perf_counter()
 
-        self.get_logger().info(f"FastSLAM step took {(t1 - t0)*1000:.2f} ms")
+        #self.get_logger().info(f"FastSLAM step took {(t1 - t0)*1000:.2f} ms")
 
         visible_ids = [m[0] for m in measurements]
 
@@ -249,13 +253,15 @@ class FastSlam_ROS(Node):
                 self.publish_best_weight_path(msg.header)
                 self.publish_odom_only_path(msg.header)
                 
-                self.estimate_motion_parameters()
-                self.estimate_measurement_noise()
+                self.compute_and_write_svd_rmse()
 
                 return
 
         # Pose keeps publishing live
         self.publish_pose(est_pose, msg.header)
+
+        self.publish_particles(particles, msg.header)
+        self.publish_map(est_map, msg.header)
 
         # Camera debug keeps publishing live
         debug_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
@@ -317,8 +323,7 @@ class FastSlam_ROS(Node):
         points = []
 
         for p in self.odom_only_path:
-            x, y = float(p[0]), float(p[1])
-            points.append([x, y, float(p[2])])
+            points.append([float(p[0]), float(p[1]), float(p[2])])
 
         cloud_msg = self.create_point_cloud(points, header, 255, 165, 0)
         self.odom_only_path_pub.publish(cloud_msg)
@@ -365,6 +370,12 @@ class FastSlam_ROS(Node):
 
     #Função chamada sempre que se recebe uma mensagem no tópico da posição estimada pelo amcl
     def amcl_callback(self, msg):
+
+        if self.latest_odom is None:
+            self.get_logger().warn("Mensagem AMCL ignorada: Odometria ainda não foi recebida.")
+            return
+
+
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
@@ -374,6 +385,8 @@ class FastSlam_ROS(Node):
         self.latest_amcl_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
         if not self.amcl_path_points:
+            self.initial_amcl = list(self.latest_amcl)
+            self.sync_odom = list(self.latest_odom)
             self.get_logger().info(f"--- FIRST AMCL POSE (Map Frame): X={x:.3f}, Y={y:.3f} ---")
             self.publish_true_landmarks(msg.header)
 
@@ -463,78 +476,6 @@ class FastSlam_ROS(Node):
         # self.true_landmarks_pub = self.create_publisher(PointCloud2, '/fastslam/true_landmarks', 10)
         self.true_landmarks_pub.publish(cloud_msg)
 
-    def compute_optimal_alignment(self):
-        """
-        Uses SVD to find optimal rotation and translation between
-        estimated landmarks and ground truth landmarks in the map frame.
-        """
-        # 1. Pair up the landmarks (only those that appear in both)
-        est_pts = []
-        true_pts = []
-        
-        # Hardcoded ground truth used in publish_true_landmarks
-        true_landmarks_data = {
-            19: [0.07, 4.39], 0: [0.07, 7.39], 17: [1.67, 8.79], 18: [0.07, 10.34],
-            16: [0.07, 13.34], 5: [0.17, 15.74], 15: [2.68, 14.38], 14: [6.14, 15.68],
-            13: [8.55, 14.35], 11: [13.29, 15.68], 12: [15.74, 15.00], 10: [15.66, 9.76],
-            7: [14.08, 6.86], 9: [14.44, 5.81], 8: [15.66, 2.46], 6: [15.6, 0.01],
-            2: [9.67, 0.07], 1: [8.20, 1.6], 3: [3.71, 0.05], 4: [0.02, 0.75]
-        }
-
-        # Offsets used to bring physical coordinates into the map frame
-        offset_x = -1.918  
-        offset_y = 0.563
-
-        for l_id, est_coords in self.best_weight_landmarks.items():
-            if l_id in true_landmarks_data:
-                phys_x = true_landmarks_data[l_id][0]
-                phys_y = true_landmarks_data[l_id][1]
-
-                # CRITICAL FIX: Standardize physical landmarks to the Map Frame 
-                # using your exact transformation formula
-                map_x = phys_y + offset_x
-                map_y = -phys_x + offset_y
-
-                mx, my = self.manual_align_point(float(est_coords[0]), float(est_coords[1]))
-                est_pts.append([mx, my])
-                true_pts.append([map_x, map_y])
-
-        if len(est_pts) < 3: # Need at least 3 points for a robust alignment
-            self.get_logger().warn("Not enough matching landmarks to compute optimal alignment.")
-            return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
-
-        # Convert to numpy
-        A = np.array(est_pts)
-        B = np.array(true_pts)
-
-        # Center data
-        centroid_A = np.mean(A, axis=0)
-        centroid_B = np.mean(B, axis=0)
-        AA = A - centroid_A
-        BB = B - centroid_B
-
-        # Covariance matrix and SVD
-        H = np.dot(AA.T, BB)
-        U, S, Vt = np.linalg.svd(H)
-        R = np.dot(Vt.T, U.T)
-        
-        # Ensure right-handed coordinate system (handles reflection edge cases)
-        if np.linalg.det(R) < 0:
-            Vt[1, :] *= -1
-            R = np.dot(Vt.T, U.T)
-        
-        # Translation vector: t = centroid_B - R * centroid_A
-        t = centroid_B - np.dot(R, centroid_A)
-        
-        angle_rad = math.atan2(R[1,0], R[0,0])
-        
-        self.get_logger().info(f"--- SVD Optimization Complete ---")
-        self.get_logger().info(f"Fine-tuning Rotation: {math.degrees(angle_rad):.3f} degrees")
-        self.get_logger().info(f"Fine-tuning Translation: X={t[0]:.3f}m, Y={t[1]:.3f}m")
-        
-        # Return parameters matching the expected return structure
-        return centroid_A[0], centroid_A[1], angle_rad, t[0], t[1], 1.0
-
     def relative_motion(self, prev_pose, curr_pose):
         dx = curr_pose[0] - prev_pose[0]
         dy = curr_pose[1] - prev_pose[1]
@@ -549,268 +490,74 @@ class FastSlam_ROS(Node):
         rot = math.atan2(math.sin(rot), math.cos(rot))
 
         return trans, rot
+    
 
+    def compute_and_write_svd_rmse(self):
+        if len(self.best_weight_path) == 0 or len(self.amcl_path_points) == 0:
+            with open("resultado_rmse.txt", "w") as f:
+                f.write("999.0")
+            return 999.0
 
-    def collect_motion_calibration_sample(self):
-        if self.latest_odom is None or self.latest_amcl is None:
-            return
-
-        if self.prev_odom_for_calib is None:
-            self.prev_odom_for_calib = list(self.latest_odom)
-            self.prev_amcl_for_calib = list(self.latest_amcl)
-            return
-
-        odom_trans, odom_rot = self.relative_motion(
-            self.prev_odom_for_calib,
-            self.latest_odom
-        )
-
-        gt_trans, gt_rot = self.relative_motion(
-            self.prev_amcl_for_calib,
-            self.latest_amcl
-        )
-
-        e_trans = gt_trans - odom_trans
-        e_rot = gt_rot - odom_rot
-        e_rot = math.atan2(math.sin(e_rot), math.cos(e_rot))
-
-        self.motion_errors.append({
-            "odom_trans": odom_trans,
-            "odom_rot": odom_rot,
-            "e_trans": e_trans,
-            "e_rot": e_rot
-        })
-
-        self.prev_odom_for_calib = list(self.latest_odom)
-        self.prev_amcl_for_calib = list(self.latest_amcl)
-
-
-    def estimate_motion_parameters(self):
-        if len(self.motion_errors) < 30:
-            self.get_logger().warn("Not enough motion samples to estimate alphas.")
-            return
-
-        samples = []
-
-        for s in self.motion_errors:
-            trans = abs(s["odom_trans"])
-            rot = abs(s["odom_rot"])
-
-            e_trans = s["e_trans"]
-            e_rot = s["e_rot"]
-
-            if trans < 1e-4 and rot < 1e-4:
-                continue
-
-            samples.append({
-                "trans": trans,
-                "rot": rot,
-                "e_trans": e_trans,
-                "e_rot": e_rot
-            })
-
-        if len(samples) < 30:
-            self.get_logger().warn("Not enough valid samples to estimate alphas.")
-            return
-
-        # -------------------------
-        # 1) Remove systematic bias
-        # -------------------------
-        mean_e_trans = np.mean([s["e_trans"] for s in samples])
-        mean_e_rot = np.mean([s["e_rot"] for s in samples])
-
-        for s in samples:
-            s["res_trans"] = s["e_trans"] - mean_e_trans
-            s["res_rot"] = s["e_rot"] - mean_e_rot
-
-        # -------------------------
-        # 2) Bin samples by motion size
-        #    and compute variance per bin
-        # -------------------------
-        rot_bins = []
-        trans_bins = []
-
-        # Rotation-noise bins
-        for s in samples:
-            motion_mag = s["rot"] + s["trans"]
-
-            rot_bins.append([
-                s["rot"],
-                s["trans"],
-                s["res_rot"] ** 2,
-                motion_mag
-            ])
+        slam_pts = []
+        amcl_pts = []
 
-            trans_bins.append([
-                s["trans"],
-                s["rot"],
-                s["res_trans"] ** 2,
-                motion_mag
-            ])
+        for p_slam in self.best_weight_path:
+            sx, sy = float(p_slam[0]), float(p_slam[1])
 
-        rot_bins = np.array(rot_bins)
-        trans_bins = np.array(trans_bins)
+            min_dist_sq = float("inf")
+            best_amcl = None
 
-        # -------------------------
-        # 3) Least squares:
-        #
-        # Var(rot_error)   ~= (a0*rot + a1*trans)^2
-        # Var(trans_error) ~= (a2*trans + a3*rot)^2
-        #
-        # Therefore:
-        # sqrt(variance) ~= a0*rot + a1*trans
-        # -------------------------
+            for p_amcl in self.amcl_path_points:
+                gx, gy = float(p_amcl[0]), float(p_amcl[1])
 
-        A_rot = []
-        y_rot = []
+                dist_sq = (sx - gx)**2 + (sy - gy)**2
 
-        A_trans = []
-        y_trans = []
+                if dist_sq < min_dist_sq:
+                    min_dist_sq = dist_sq
+                    best_amcl = [gx, gy]
 
-        for row in rot_bins:
-            rot = row[0]
-            trans = row[1]
-            err2 = row[2]
+            if best_amcl is not None:
+                slam_pts.append([sx, sy])
+                amcl_pts.append(best_amcl)
 
-            A_rot.append([rot, trans])
-            y_rot.append(math.sqrt(max(err2, 1e-12)))
+        if len(slam_pts) < 3:
+            with open("resultado_rmse.txt", "w") as f:
+                f.write("999.0")
+            return 999.0
 
-        for row in trans_bins:
-            trans = row[0]
-            rot = row[1]
-            err2 = row[2]
+        A = np.array(slam_pts)
+        B = np.array(amcl_pts)
 
-            A_trans.append([trans, rot])
-            y_trans.append(math.sqrt(max(err2, 1e-12)))
+        centroid_A = np.mean(A, axis=0)
+        centroid_B = np.mean(B, axis=0)
 
-        A_rot = np.array(A_rot)
-        y_rot = np.array(y_rot)
+        AA = A - centroid_A
+        BB = B - centroid_B
 
-        A_trans = np.array(A_trans)
-        y_trans = np.array(y_trans)
+        H = AA.T @ BB
+        U, S, Vt = np.linalg.svd(H)
+        R = Vt.T @ U.T
 
-        rot_params, _, _, _ = np.linalg.lstsq(A_rot, y_rot, rcond=None)
-        trans_params, _, _, _ = np.linalg.lstsq(A_trans, y_trans, rcond=None)
+        if np.linalg.det(R) < 0:
+            Vt[1, :] *= -1
+            R = Vt.T @ U.T
 
-        alpha0 = max(float(rot_params[0]), 1e-6)
-        alpha1 = max(float(rot_params[1]), 1e-6)
+        t = centroid_B - R @ centroid_A
 
-        alpha2 = max(float(trans_params[0]), 1e-6)
-        alpha3 = max(float(trans_params[1]), 1e-6)
+        sum_sq_errors = 0.0
 
-        # -------------------------
-        # 4) Clamp to sane FastSLAM values
-        # -------------------------
-        alpha0 = min(alpha0, 1.2)
-        alpha1 = min(alpha1, 0.05)
-        alpha2 = min(alpha2, 0.10)
-        alpha3 = min(alpha3, 0.05)
+        for i in range(len(A)):
+            aligned_pt = R @ A[i] + t
+            sum_sq_errors += np.sum((aligned_pt - B[i])**2)
 
-        self.get_logger().info(
-            f"Motion bias removed: "
-            f"mean_e_trans={mean_e_trans:.6f}, "
-            f"mean_e_rot={math.degrees(mean_e_rot):.3f} deg"
-        )
+        ate_rmse = math.sqrt(sum_sq_errors / len(A))
 
-        self.get_logger().info(
-            f"Estimated FastSLAM alphas = "
-            f"[{alpha0:.6f}, {alpha1:.6f}, {alpha2:.6f}, {alpha3:.6f}]"
-        )
+        self.get_logger().info(f"ATE SVD RMSE: {ate_rmse:.4f} m")
 
-    def collect_measurement_calibration_samples(self, measurements):
+        with open("resultado_rmse.txt", "w") as f:
+            f.write(str(ate_rmse))
 
-        if self.latest_amcl is None:
-            return
-
-        if not hasattr(self, "landmarks"):
-            return
-
-        rx, ry, rtheta = self.latest_amcl
-
-        cam_x = rx + 0.05 * math.cos(rtheta)
-        cam_y = ry + 0.05 * math.sin(rtheta)
-
-        for m in measurements:
-
-            lm_id = m[0]
-
-            if lm_id not in self.landmarks:
-                continue
-
-            measured_r = m[1]
-            measured_b = m[2]
-
-            lm_x = self.landmarks[lm_id][1] - 1.918
-            lm_y = -self.landmarks[lm_id][0] + 0.563
-
-            dx = lm_x - cam_x
-            dy = lm_y - cam_y
-
-            expected_r = math.hypot(dx, dy)
-
-            expected_b = math.atan2(dy, dx) - rtheta
-            expected_b = math.atan2(
-                math.sin(expected_b),
-                math.cos(expected_b)
-            )
-
-            e_r = measured_r - expected_r
-
-            e_b = measured_b - expected_b
-            e_b = math.atan2(
-                math.sin(e_b),
-                math.cos(e_b)
-            )
-
-            self.measurement_errors.append(
-                [e_r, e_b]
-            )
-
-
-    def estimate_measurement_noise(self):
-
-        if len(self.measurement_errors) < 30:
-            self.get_logger().warn(
-                "Not enough measurement samples."
-            )
-            return
-
-        E = np.array(
-            self.measurement_errors
-        )
-
-        mean = np.mean(
-            E,
-            axis=0
-        )
-
-        residuals = E - mean
-
-        R = np.cov(
-            residuals.T
-        )
-
-        range_noise = min(
-            max(
-                float(R[0,0]),
-                0.01
-            ),
-            0.5
-        )
-
-        bearing_noise = min(
-            max(
-                float(R[1,1]),
-                0.001
-            ),
-            0.2
-        )
-
-        self.get_logger().info(
-            f"Estimated R_noise = "
-            f"[[{range_noise:.6f},0],"
-            f"[0,{bearing_noise:.6f}]]"
-        )
+        return ate_rmse
 
 def main(args=None):
     rclpy.init(args=args)
